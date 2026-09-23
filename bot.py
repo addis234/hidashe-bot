@@ -20,7 +20,7 @@ logging.basicConfig(
 )
 
 # -------------------------------------------------------------
-# 1. RENDER HEALTH CHECK SERVER (Time Out & Port Binding Fix)
+# 1. RENDER HEALTH CHECK SERVER
 # -------------------------------------------------------------
 class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -38,15 +38,18 @@ def start_health_check_server():
 # 2. BOT CONFIGURATION & DATA
 # -------------------------------------------------------------
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
-ADMIN_ID = 6722504980
+
+# ⚠️ እዚህ ቦታ ላይ ከ @userinfobot ያገኙትን ትክክለኛ ID ያስገቡ
+ADMIN_ID = 6722504980  # <-- የራስዎን ID እዚህ ጋር ያረጋግጡ
+
 TICKET_PRICE = 50  # ETB
-REFERRAL_BONUS = 10  # ETB per invited ticket buyer
+REFERRAL_BONUS = 10  # ETB
 
 # Payment Details
 CBE_ACCOUNT = "1000723732108"
 TELEBIRR_NUMBER = "0914197335"
 
-# Updated Specific Prize Tiers
+# Specific Prize Tiers
 PRIZES = [
     "1ኛ ደረጃ፦ Core i7 14th Gen Laptop 💻",
     "2ኛ ደረጃ፦ Samsung Galaxy A54 📱",
@@ -60,8 +63,7 @@ PRIZES = [
     "10ኛ ደረጃ፦ 1,000 ETB 💵"
 ]
 
-# Database in memory
-users_db = {}  # user_id: {'tickets': count, 'balance': ref_earnings, 'referrer': id, 'username': str, 'full_name': str}
+users_db = {}
 
 # -------------------------------------------------------------
 # 3. BOT HANDLERS
@@ -70,7 +72,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     user_id = user.id
     
-    # Check for referral parameter
     args = context.args
     if user_id not in users_db:
         users_db[user_id] = {
@@ -176,14 +177,18 @@ async def handle_receipt(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"2. `/approve {user_id} <ብዛት>` (ለብዙ ቲኬት)"
     )
     
-    await context.bot.send_message(chat_id=ADMIN_ID, text=admin_msg, parse_mode="Markdown")
-    
-    if update.message.photo or update.message.document:
-        await context.bot.forward_message(chat_id=ADMIN_ID, from_chat_id=user_id, message_id=update.message.message_id)
-    elif update.message.text:
-        await context.bot.send_message(chat_id=ADMIN_ID, text=f"💬 የተላከ የጽሁፍ መልዕክት/ቁጥር፦\n`{update.message.text}`", parse_mode="Markdown")
-    
-    await update.message.reply_text("✅ ደረሰኝዎ ለቁጥጥር ለአድሚን ተልኳል! ከተረጋገጠ በኋላ ቲኬትዎ ይላክልዎታል።")
+    try:
+        await context.bot.send_message(chat_id=ADMIN_ID, text=admin_msg, parse_mode="Markdown")
+        
+        if update.message.photo or update.message.document:
+            await context.bot.forward_message(chat_id=ADMIN_ID, from_chat_id=user_id, message_id=update.message.message_id)
+        elif update.message.text:
+            await context.bot.send_message(chat_id=ADMIN_ID, text=f"💬 የተላከ የጽሁፍ መልዕክት/ቁጥር፦\n`{update.message.text}`", parse_mode="Markdown")
+        
+        await update.message.reply_text("✅ ደረሰኝዎ ለቁጥጥር ለአድሚን ተልኳል! ከተረጋገጠ በኋላ ቲኬትዎ ይላክልዎታል።")
+    except Exception as e:
+        logging.error(f"Error sending receipt to admin: {e}")
+        await update.message.reply_text("❌ ደረሰኙን ለቀጣሪ መላክ አልተቻለም። እባክዎን አድሚኑ ቦቱን /start ማድረጉን ያረጋግጡ።")
 
 async def approve_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
