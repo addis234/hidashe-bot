@@ -46,11 +46,11 @@ REFERRAL_BONUS = 10  # ETB per invited ticket buyer
 CBE_ACCOUNT = "1000723732108"
 TELEBIRR_NUMBER = "0914197335"
 
-# Updated Prize Tiers
+# Updated Specific Prize Tiers
 PRIZES = [
-    "1ኛ ደረጃ፦ ዘመናዊ Laptop 💻",
-    "2ኛ ደረጃ፦ Smartphone 📱",
-    "3ኛ ደረጃ፦ Tablet 📲",
+    "1ኛ ደረጃ፦ Core i7 14th Gen Laptop 💻",
+    "2ኛ ደረጃ፦ Samsung Galaxy A54 📱",
+    "3ኛ ደረጃ፦ Lenovo Tab P11 📲",
     "4ኛ ደረጃ፦ 10,000 ETB 💵",
     "5ኛ ደረጃ፦ 8,000 ETB 💵",
     "6ኛ ደረጃ፦ 6,000 ETB 💵",
