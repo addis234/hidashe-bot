@@ -4,7 +4,6 @@ import logging
 import json
 import random
 import re
-from io import BytesIO
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import threading
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, ReplyKeyboardMarkup, ReplyKeyboardRemove
@@ -16,10 +15,6 @@ from telegram.ext import (
     ContextTypes,
     filters
 )
-
-# EasyOCR setup for reading text from images
-import easyocr
-reader = easyocr.Reader(['en'], gpu=False)  # English letters & digits
 
 # Enable logging
 logging.basicConfig(
@@ -223,8 +218,8 @@ async def handle_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"`{CBE_ACCOUNT}`\n\n"
             f"▫️ **በቴሌብር (Telebirr)፦**\n"
             f"`{TELEBIRR_NUMBER}`\n\n"
-            f"⚡ **አውቶማቲክ ማረጋገጫ፦**\n"
-            f"ክፍያ ሲፈጽሙ የሚመጣውን **የስክሪንሹት ፎቶ (Screenshot)** ወይም የትራንዛክሽን ቁጥር እዚህ ይላኩ። ቦቱ ፎቶውን አንብቦ በራሱ ቲኬትዎን በጥቂት ሰከንዶች ውስጥ ይልካል!"
+            f"⚡ **ማረጋገጫ፦**\n"
+            f"ክፍያ ሲፈጽሙ የሚመጣውን የትራንዛክሽን SMS መልእክት ኮፒ አድርገው እዚህ ይላኩ ወይም የስክሪንሹት ፎቶ (Screenshot) ይላኩ።"
         )
         await update.message.reply_text(msg, parse_mode="Markdown", reply_markup=get_back_keyboard())
 
@@ -247,6 +242,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     try:
         if query.data == "buy_ticket":
+            # ስልክ ቁጥር አለመኖሩን ማረጋገጫ
             if not users_db[user_id].get('phone'):
                 phone_prompt = (
                     f"⚠️ **ስልክ ቁጥር ያስፈልጋል!**\n\n"
@@ -263,8 +259,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"`{CBE_ACCOUNT}`\n\n"
                 f"▫️ **በቴሌብር (Telebirr)፦**\n"
                 f"`{TELEBIRR_NUMBER}`\n\n"
-                f"⚡ **አውቶማቲክ ማረጋገጫ፦**\n"
-                f"ክፍያ እንደፈጸሙ የሚመጣውን **የስክሪንሹት ፎቶ (Screenshot)** ወይም የትራንዛክሽን ቁጥር እዚህ ይላኩ። ቦቱ ፎቶውን አብቦ በራሱ አረጋግጦ ቲኬትዎን ያዘጋጃል!"
+                f"⚡ **ማረጋገጫ፦**\n"
+                f"ክፍያ እንደፈጸሙ የሚመጣውን የትራንዛክሽን SMS መልእክት ኮፒ አድርገው እዚህ ይላኩ ወይም የስክሪንሹት ፎቶ (Screenshot) ይላኩ።"
             )
             await query.edit_message_text(msg, parse_mode="Markdown", reply_markup=get_back_keyboard())
 
@@ -317,7 +313,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logging.error(f"Error handling button click: {e}")
 
 # -------------------------------------------------------------
-# AUTOMATIC RECEIPT OCR & PAYMENT VERIFICATION
+# 5. RECEIPT & PAYMENT VERIFICATION
 # -------------------------------------------------------------
 async def handle_receipt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
@@ -335,25 +331,19 @@ async def handle_receipt(update: Update, context: ContextTypes.DEFAULT_TYPE):
         }
         save_db()
 
+    # ተጠቃሚው ስልክ ቁጥር ሳይመዘግብ ደረሰኝ/ትራንዛክሽን ቢልክ ስልክ ቁጥሩን እንዲልክ መጠየቂያ
+    if not users_db[user_id].get('phone'):
+        phone_prompt = (
+            f"⚠️ **ስልክ ቁጥር አልተመዘገበም!**\n\n"
+            f"የከፈሉትን ክፍያ ለማረጋገጥ እና ቲኬትዎን ለመስጠት መጀመሪያ ስልክ ቁጥርዎን መላክ አለብዎት።\n"
+            f"እባክዎን ከታች ያለውን **'📱 ስልክ ቁጥሬን ላክ'** የሚለውን ቁልፍ ተጫነው ስልክዎን ያጋሩ።"
+        )
+        await update.message.reply_text(phone_prompt, parse_mode="Markdown", reply_markup=get_phone_keyboard())
+        return
+
     text_content = update.message.text or update.message.caption or ""
 
-    # 1. Check if an image screenshot was sent
-    if update.message.photo:
-        processing_msg = await update.message.reply_text("🔍 **ስክሪንሹቱ እየተመረመረ ነው... እባክዎን ሰከንዶች ይጠብቁ...**", parse_mode="Markdown")
-        
-        try:
-            # Download photo to memory
-            photo_file = await update.message.photo[-1].get_file()
-            file_bytearray = await photo_file.download_as_bytearray()
-            
-            # Read text from photo via EasyOCR
-            results = reader.readtext(BytesIO(file_bytearray), detail=0)
-            text_content += " " + " ".join(results)
-            logging.info(f"OCR Extracted Text: {text_content}")
-        except Exception as e:
-            logging.error(f"OCR Processing Error: {e}")
-
-    # 2. Extract Txn ID using Regex (Telebirr and Ethiopian Bank Formats)
+    # Check for Transaction ID in text/SMS
     txn_match = re.search(r'\b(FT[A-Z0-9]{8,12}|[A-Z0-9]{10,14})\b', text_content, re.IGNORECASE)
 
     if txn_match:
@@ -363,7 +353,6 @@ async def handle_receipt(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("⚠️ **ይህ የትራንዛክሽን ቁጥር ቀደም ሲል ጥቅም ላይ ውሏል!**\nእባክዎን አዲስ ክፍያ በመፈጸም ትክክለኛ ደረሰኝ ያስገቡ።", parse_mode="Markdown")
             return
 
-        # Calculate number of tickets based on amount detected or default to 1
         amount_match = re.search(r'(?:ETB|ብር)?\s*([\d,]+(?:\.\d{1,2})?)', text_content, re.IGNORECASE)
         num_tickets = 1
         if amount_match:
@@ -378,12 +367,11 @@ async def handle_receipt(update: Update, context: ContextTypes.DEFAULT_TYPE):
         used_transactions.add(txn_id)
         save_used_txns()
 
-        # Issue Tickets
         new_tickets, ref_id, ref_bonus = process_ticket_issuance(user_id, num_tickets)
         formatted_tickets = ", ".join([f"`{tn}`" for tn in new_tickets])
 
         success_msg = (
-            f"🎉 **ክፍያዎ ከስክሪንሹቱ/ከደረሰኙ ላይ በስኬት ተረጋግጧል!**\n\n"
+            f"🎉 **ክፍያዎ በስኬት ተረጋግጧል!**\n\n"
             f"🔖 **Txn ID:** `{txn_id}`\n"
             f"🎟️ **የተቆረጠ ቲኬት ብዛት፦** {num_tickets}\n"
             f"🔢 **የትኬት ቁጥሮችዎ፦** {formatted_tickets}\n\n"
@@ -391,7 +379,6 @@ async def handle_receipt(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         await update.message.reply_text(success_msg, parse_mode="Markdown")
 
-        # Notify Referrer
         if ref_id and ref_bonus > 0:
             try:
                 await context.bot.send_message(
@@ -406,11 +393,11 @@ async def handle_receipt(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception as e:
                 logging.warning(f"Failed to notify referrer: {e}")
 
-        # Send Admin Log
         admin_log = (
-            f"⚡ **አውቶማቲክ ክፍያ በስክሪንሹት ተፀድቋል!**\n\n"
+            f"⚡ **አውቶማቲክ ክፍያ ተፀድቋል!**\n\n"
             f"👤 ተጠቃሚ፦ {user.full_name} (@{user.username})\n"
             f"🆔 ID: `{user_id}`\n"
+            f"📞 ስልክ፦ `{users_db[user_id]['phone']}`\n"
             f"🔖 Txn ID: `{txn_id}`\n"
             f"🎟️ የተቆረጡ ቲኬቶች፦ {', '.join(new_tickets)}"
         )
@@ -420,11 +407,10 @@ async def handle_receipt(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logging.error(f"Failed to log auto-approval to admin: {e}")
 
     else:
-        # Fallback to Admin Manual Review if OCR fails to detect Txn ID
+        # If user sent a photo screenshot or text without Txn ID -> Forward to Admin
         user_phone = users_db[user_id].get('phone', 'አልተመዘገበም')
         admin_msg = (
-            f"📥 **አዲስ የቲኬት ክፍያ ደረሰኝ/መልእክት ደርሷል!**\n"
-            f"*(አውቶማቲክ ማንበብ ስላልተቻለ በእጅ እንዲያፀድቁ ተልኳል)*\n\n"
+            f"📥 **አዲስ የቲኬት ክፍያ ደረሰኝ/መልእክት ደርሷል!**\n\n"
             f"👤 ላኪ፦ {user.full_name} (@{user.username})\n"
             f"🆔 ID: `{user_id}`\n"
             f"📞 ስልክ፦ `{user_phone}`\n\n"
@@ -499,7 +485,7 @@ async def approve_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ እባክዎን በትክክለኛው ፎርማት ያስገቡ፦ `/approve <USER_ID> <ብዛት>`", parse_mode="Markdown")
 
 # -------------------------------------------------------------
-# 5. ADMIN STATS HANDLER (/stats)
+# 6. ADMIN STATS HANDLER (/stats)
 # -------------------------------------------------------------
 async def show_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
@@ -518,7 +504,7 @@ async def show_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(stats_msg, parse_mode="Markdown")
 
 # -------------------------------------------------------------
-# 6. LIVE LOTTERY DRAW HANDLER (/draw)
+# 7. LIVE LOTTERY DRAW HANDLER (/draw)
 # -------------------------------------------------------------
 async def draw_lottery(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
@@ -606,7 +592,7 @@ async def draw_lottery(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await context.bot.send_message(chat_id=ADMIN_ID, text=admin_final_report, parse_mode="Markdown")
 
 # -------------------------------------------------------------
-# 7. MAIN EXECUTION
+# 8. MAIN EXECUTION
 # -------------------------------------------------------------
 def main():
     threading.Thread(target=start_health_check_server, daemon=True).start()
