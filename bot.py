@@ -41,9 +41,7 @@ logging.basicConfig(
     level=logging.INFO
 )
 
-# -------------------------------------------------------------
 # STATES FOR CONVERSATION
-# -------------------------------------------------------------
 SELECT_METHOD, ENTER_AMOUNT, ENTER_PIN_OR_TXN = range(3)
 
 # -------------------------------------------------------------
@@ -184,7 +182,7 @@ def get_payment_method_keyboard():
     return InlineKeyboardMarkup(keyboard)
 
 # -------------------------------------------------------------
-# 4. BOT HANDLERS & PAYMENT FLOW
+# 4. BOT HANDLERS & PAYMENT FLOW WITH OCR SUPPORT
 # -------------------------------------------------------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
@@ -263,7 +261,7 @@ async def method_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def amount_entered(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
-    if not text.isdigit() or int(text) < TICKET_PRICE:
+    if not text or not text.isdigit() or int(text) < TICKET_PRICE:
         await update.message.reply_text(f"⚠️ እባክዎን ትክክለኛ የብር መጠን ያስገቡ (ከ {TICKET_PRICE} ብር ወይም ከዚያ በላይ)፦")
         return ENTER_AMOUNT
 
@@ -277,50 +275,72 @@ async def amount_entered(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = (
         f"💰 **የከፈሉት መጠን፦ {amount} ETB** ({num_tickets} ቲኬት)\n\n"
         f"እባክዎን ክፍያውን ወደዚህ ሂሳብ ይላኩ፦ `{acc_info}`\n\n"
-        f"🔐 **ክፍያውን ከፈጸሙ በኋላ የወጣውን የትራንዛክሽን ቁጥር (Txn ID) ወይም የማረጋገጫ ኮድ እዚህ ያስገቡ፦**"
+        f"🔐 **ክፍያውን ከፈጸሙ በኋላ የወጣውን የትራንዛክሽን ቁጥር (Txn ID) ጽሁፍ እዚህ ያስገቡ ወይም የደረሰኙን የስክሪንሹት (Screenshot) ፎቶ ይላኩ፦**"
     )
     await update.message.reply_text(msg, parse_mode="Markdown")
     return ENTER_PIN_OR_TXN
 
 async def pin_or_txn_entered(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    txn_id = update.message.text.strip().upper()
     num_tickets = context.user_data.get('num_tickets', 1)
+    text_content = update.message.text or update.message.caption or ""
 
-    if txn_id in used_transactions:
-        await update.message.reply_text("⚠️ **ይህ የትራንዛክሽን ቁጥር ቀደም ሲል ጥቅም ላይ ውሏል!**\nእባክዎን ትክክለኛ የትራንዛክሽን ቁጥር ያስገቡ።")
-        return ENTER_PIN_OR_TXN
-
-    used_transactions.add(txn_id)
-    save_used_txns()
-
-    new_tickets, ref_id, ref_bonus = process_ticket_issuance(user_id, num_tickets)
-    formatted_tickets = ", ".join([f"`{tn}`" for tn in new_tickets])
-
-    success_msg = (
-        f"✅ **ክፍያው በስኬት ተጠናቋል!**\n\n"
-        f"🔖 **የትራንዛክሽን ቁጥር፦** `{txn_id}`\n"
-        f"🎟️ **የተሰጠዎት የቲኬት ቁጥር፦** {formatted_tickets}\n\n"
-        f"🎉 **መልካም እድል!**\n"
-        f"የራስዎን የሪፈራል ሊንክ በመውሰድ ሰዎችን መጋበዝ ይችላሉ!"
-    )
-    await update.message.reply_text(success_msg, parse_mode="Markdown", reply_markup=get_back_keyboard())
-
-    if ref_id and ref_bonus > 0:
+    # ፎቶ ከተላከ በ Tesseract OCR ማንበብ
+    if update.message.photo:
+        file_path = f"temp_{user_id}.jpg"
         try:
-            await context.bot.send_message(
-                chat_id=ref_id,
-                text=(
-                    f"🎉 **እንኳን ደስ አለዎት!**\n\n"
-                    f"በእርስዎ ሊንክ የገባ ተጠቃሚ ({num_tickets} ቲኬት) ስለቆረጠ "
-                    f"**{ref_bonus} ETB** ቦነስ ኮሚሽን ወደ ሂሳብዎ ገብቷል!"
-                ),
-                parse_mode="Markdown"
-            )
-        except Exception as e:
-            logging.warning(f"Failed to notify referrer: {e}")
+            photo_file = await update.message.photo[-1].get_file()
+            await photo_file.download_to_drive(file_path)
 
-    return ConversationHandler.END
+            extracted_text = pytesseract.image_to_string(Image.open(file_path))
+            text_content += " " + extracted_text
+        except Exception as e:
+            logging.error(f"OCR Error: {e}")
+        finally:
+            if os.path.exists(file_path):
+                os.remove(file_path)
+
+    # የትራንዛክሽን ቁጥር (CBE ወይም Telebirr Txn ID) መፈለግ
+    txn_match = re.search(r'\b(FT[A-Z0-9]{8,12}|[A-Z0-9]{10,14})\b', text_content, re.IGNORECASE)
+
+    if txn_match:
+        txn_id = txn_match.group(1).upper()
+
+        if txn_id in used_transactions:
+            await update.message.reply_text("⚠️ **ይህ የትራንዛክሽን ቁጥር ቀደም ሲል ጥቅም ላይ ውሏል!**\nእባክዎን ትክክለኛ የትራንዛክሽን ቁጥር ወይም አዲስ ፎቶ ያስገቡ።")
+            return ENTER_PIN_OR_TXN
+
+        used_transactions.add(txn_id)
+        save_used_txns()
+
+        new_tickets, ref_id, ref_bonus = process_ticket_issuance(user_id, num_tickets)
+        formatted_tickets = ", ".join([f"`{tn}`" for tn in new_tickets])
+
+        success_msg = (
+            f"🎉 **ክፍያው ተጠናቋል!**\n\n"
+            f"🔖 **የትራንዛክሽን ቁጥር፦** `{txn_id}`\n"
+            f"🎟️ **የተሰጠዎት የቲኬት ቁጥር፦** {formatted_tickets}\n\n"
+            f"መልካም እድል!"
+        )
+        await update.message.reply_text(success_msg, parse_mode="Markdown", reply_markup=get_back_keyboard())
+
+        if ref_id and ref_bonus > 0:
+            try:
+                await context.bot.send_message(
+                    chat_id=ref_id,
+                    text=f"🎉 በእርስዎ ሊንክ የገባ ተጠቃሚ ቲኬት ስለቆረጠ **{ref_bonus} ETB** ኮሚሽን አግኝተዋል!",
+                    parse_mode="Markdown"
+                )
+            except Exception as e:
+                logging.warning(f"Failed to notify referrer: {e}")
+
+        return ConversationHandler.END
+    else:
+        await update.message.reply_text(
+            "❌ **የትራንዛክሽን ቁጥር በፎቶው/ጽሁፉ ላይ ማግኘት አልተቻለም!**\n"
+            "እባክዎን ግልጽ የሆነ ፎቶ ይላኩ ወይም የትራንዛክሽን ቁጥሩን (ምሳሌ፦ FT24... ወይም 102938475) በጽሁፍ ያስገቡ፦"
+        )
+        return ENTER_PIN_OR_TXN
 
 async def cancel_flow(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("❌ የክፍያ ሂደቱ ተሰርዟል።", reply_markup=get_back_keyboard())
@@ -363,18 +383,11 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif query.data == "get_referral":
         user_data = users_db.get(user_id, {'tickets': 0})
         if user_data.get('tickets', 0) < 1:
-            msg = (
-                f"❌ **የሪፈራል ሊንክ ማግኘት አልተቻለም!**\n\n"
-                f"የሪፈራል ሊንክ ለማግኘትና ሰዎችን በመጋበዝ ኮሚሽን ለማግኘት **ቢያንስ 1 ቲኬት** መቁረጥ ይኖርብዎታል።\n\n"
-                f"እባክዎን መጀመሪያ ቲኬት ይቁረጡ!"
-            )
+            msg = "❌ **የሪፈራል ሊንክ ለማግኘት ቢያንስ 1 ቲኬት መቁረጥ አለብዎት!**"
         else:
             bot_username = context.bot.username
             ref_link = f"https://t.me/{bot_username}?start={user_id}"
-            msg = (
-                f"🔗 **የእርስዎ የሪፈራል ሊንክ፦**\n`{ref_link}`\n\n"
-                f"ይህንን ሊንክ ለወዳጅ ዘመድዎ ያጋሩ! በእርስዎ ሊንክ ገብተው ሰዎች በሚቆርጡት እያንዳንዱ ቲኬት **{REFERRAL_BONUS} ብር** ኮሚሽን ያገኛሉ።"
-            )
+            msg = f"🔗 **የእርስዎ የሪፈራል ሊንክ፦**\n`{ref_link}`"
         await query.edit_message_text(msg, parse_mode="Markdown", reply_markup=get_back_keyboard())
 
     elif query.data == "my_balance":
@@ -389,12 +402,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(msg, parse_mode="Markdown", reply_markup=get_back_keyboard())
 
     elif query.data == "main_menu":
-        welcome_text = (
-            f"እንኳን ወደ **ህዳሴ ሎተሪ** በደህና መጡ! 🎟️\n\n"
-            f"የአንድ ቲኬት ዋጋ፦ **{TICKET_PRICE} ብር**\n"
-            f"የፈለጉትን ያህል ቲኬት መግዛት ይችላሉ!\n\n"
-            f"እባክዎን ከታች ካሉት አማራጮች አንዱን ይምረጡ፦"
-        )
+        welcome_text = "እንኳን ወደ **ህዳሴ ሎተሪ** በደህና መጡ! 🎟️"
         await query.edit_message_text(welcome_text, parse_mode="Markdown", reply_markup=get_main_menu_keyboard())
 
 # -------------------------------------------------------------
@@ -410,8 +418,6 @@ async def approve_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if target_user_id in users_db:
             new_ticket_numbers, ref_id, bonus_amount = process_ticket_issuance(target_user_id, num_tickets)
-            buyer = users_db[target_user_id]
-
             formatted_tickets = ", ".join([f"`{tn}`" for tn in new_ticket_numbers])
             await context.bot.send_message(
                 chat_id=target_user_id,
@@ -461,7 +467,7 @@ def main():
         states={
             SELECT_METHOD: [CallbackQueryHandler(method_selected, pattern="^(pay_cbe|pay_telebirr|cancel_payment)$")],
             ENTER_AMOUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, amount_entered)],
-            ENTER_PIN_OR_TXN: [MessageHandler(filters.TEXT & ~filters.COMMAND, pin_or_txn_entered)]
+            ENTER_PIN_OR_TXN: [MessageHandler((filters.TEXT | filters.PHOTO) & ~filters.COMMAND, pin_or_txn_entered)]
         },
         fallbacks=[CommandHandler("cancel", cancel_flow)]
     )
