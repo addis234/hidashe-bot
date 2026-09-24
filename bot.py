@@ -4,6 +4,7 @@ import logging
 import json
 import random
 import re
+from io import BytesIO
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import threading
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, ReplyKeyboardMarkup, ReplyKeyboardRemove
@@ -15,6 +16,10 @@ from telegram.ext import (
     ContextTypes,
     filters
 )
+
+# EasyOCR setup for reading text from images
+import easyocr
+reader = easyocr.Reader(['en'], gpu=False)  # English letters & digits
 
 # Enable logging
 logging.basicConfig(
@@ -112,7 +117,6 @@ used_transactions = load_used_txns()
 # 3. HELPER FUNCTIONS & KEYBOARDS
 # -------------------------------------------------------------
 def process_ticket_issuance(user_id: int, num_tickets: int):
-    """ Helper to issue tickets and pay referral bonuses automatically """
     buyer = users_db[user_id]
     buyer['tickets'] += num_tickets
 
@@ -124,7 +128,6 @@ def process_ticket_issuance(user_id: int, num_tickets: int):
 
     buyer.setdefault('ticket_numbers', []).extend(new_ticket_numbers)
 
-    # Process Referral Bonus
     referrer_id = buyer.get('referrer')
     bonus_issued = 0
     if referrer_id and referrer_id in users_db:
@@ -210,17 +213,6 @@ async def handle_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
             users_db[user_id]['phone'] = phone_number
         save_db()
 
-        admin_notice = (
-            f"📱 **አዲስ የስልክ ቁጥር መዝገብ!**\n\n"
-            f"👤 ተጠቃሚ፦ {user.full_name} (@{user.username})\n"
-            f"🆔 ID: `{user_id}`\n"
-            f"📞 ስልክ፦ `{phone_number}`"
-        )
-        try:
-            await context.bot.send_message(chat_id=ADMIN_ID, text=admin_notice, parse_mode="Markdown")
-        except Exception as e:
-            logging.error(f"Failed to send contact to admin: {e}")
-
         await update.message.reply_text("✅ ስልክ ቁጥርዎ በስኬት ተመዝግቧል!", reply_markup=ReplyKeyboardRemove())
         
         msg = (
@@ -232,7 +224,7 @@ async def handle_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"▫️ **በቴሌብር (Telebirr)፦**\n"
             f"`{TELEBIRR_NUMBER}`\n\n"
             f"⚡ **አውቶማቲክ ማረጋገጫ፦**\n"
-            f"ክፍያ ሲፈጽሙ የሚመጣውን **የየአገልግሎቱ የትራንዛክሽን ቁጥር (Transaction ID / Txn Ref)** እዚህ ይላኩ። ቦቱ በራሱ አረጋግጦ ቲኬትዎን በጥቂት ሰከንዶች ውስጥ ይልካል!"
+            f"ክፍያ ሲፈጽሙ የሚመጣውን **የስክሪንሹት ፎቶ (Screenshot)** ወይም የትራንዛክሽን ቁጥር እዚህ ይላኩ። ቦቱ ፎቶውን አንብቦ በራሱ ቲኬትዎን በጥቂት ሰከንዶች ውስጥ ይልካል!"
         )
         await update.message.reply_text(msg, parse_mode="Markdown", reply_markup=get_back_keyboard())
 
@@ -272,7 +264,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"▫️ **በቴሌብር (Telebirr)፦**\n"
                 f"`{TELEBIRR_NUMBER}`\n\n"
                 f"⚡ **አውቶማቲክ ማረጋገጫ፦**\n"
-                f"ክፍያ እንደፈጸሙ የሚመጣውን **የትራንዛክሽን ቁጥር (Transaction ID)** ወይም የቴሌብር/ባንክ SMS መልእክት እዚህ ይላኩ። ቦቱ በራሱ አረጋግጦ ቲኬትዎን ያዘጋጃል!"
+                f"ክፍያ እንደፈጸሙ የሚመጣውን **የስክሪንሹት ፎቶ (Screenshot)** ወይም የትራንዛክሽን ቁጥር እዚህ ይላኩ። ቦቱ ፎቶውን አብቦ በራሱ አረጋግጦ ቲኬትዎን ያዘጋጃል!"
             )
             await query.edit_message_text(msg, parse_mode="Markdown", reply_markup=get_back_keyboard())
 
@@ -284,7 +276,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         elif query.data == "get_referral":
             user_data = users_db.get(user_id, {'tickets': 0})
-            
             if user_data.get('tickets', 0) < 1:
                 msg = (
                     f"❌ **የሪፈራል ሊንክ ማግኘት አልተቻለም!**\n\n"
@@ -326,7 +317,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logging.error(f"Error handling button click: {e}")
 
 # -------------------------------------------------------------
-# AUTOMATIC PAYMENT VERIFICATION & RECEIPT HANDLER
+# AUTOMATIC RECEIPT OCR & PAYMENT VERIFICATION
 # -------------------------------------------------------------
 async def handle_receipt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
@@ -346,18 +337,34 @@ async def handle_receipt(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     text_content = update.message.text or update.message.caption or ""
 
-    # Regular Expression patterns for Telebirr and Bank Transaction IDs
+    # 1. Check if an image screenshot was sent
+    if update.message.photo:
+        processing_msg = await update.message.reply_text("🔍 **ስክሪንሹቱ እየተመረመረ ነው... እባክዎን ሰከንዶች ይጠብቁ...**", parse_mode="Markdown")
+        
+        try:
+            # Download photo to memory
+            photo_file = await update.message.photo[-1].get_file()
+            file_bytearray = await photo_file.download_as_bytearray()
+            
+            # Read text from photo via EasyOCR
+            results = reader.readtext(BytesIO(file_bytearray), detail=0)
+            text_content += " " + " ".join(results)
+            logging.info(f"OCR Extracted Text: {text_content}")
+        except Exception as e:
+            logging.error(f"OCR Processing Error: {e}")
+
+    # 2. Extract Txn ID using Regex (Telebirr and Ethiopian Bank Formats)
     txn_match = re.search(r'\b(FT[A-Z0-9]{8,12}|[A-Z0-9]{10,14})\b', text_content, re.IGNORECASE)
 
     if txn_match:
         txn_id = txn_match.group(1).upper()
 
         if txn_id in used_transactions:
-            await update.message.reply_text("⚠️ **ይህ የትራንዛክሽን ቁጥር ቀደም ሲል ጥቅም ላይ ውሏል!**\nእባክዎን አዲስ ክፍያ በመፈጸም ትክክለኛ የትራንዛክሽን ቁጥር ያስገቡ።", parse_mode="Markdown")
+            await update.message.reply_text("⚠️ **ይህ የትራንዛክሽን ቁጥር ቀደም ሲል ጥቅም ላይ ውሏል!**\nእባክዎን አዲስ ክፍያ በመፈጸም ትክክለኛ ደረሰኝ ያስገቡ።", parse_mode="Markdown")
             return
 
-        # Automatic extraction of amount if available in SMS, otherwise defaults to 1 ticket
-        amount_match = re.search(r'ETB\s*([\d,]+(?:\.\d{1,2})?)', text_content, re.IGNORECASE)
+        # Calculate number of tickets based on amount detected or default to 1
+        amount_match = re.search(r'(?:ETB|ብር)?\s*([\d,]+(?:\.\d{1,2})?)', text_content, re.IGNORECASE)
         num_tickets = 1
         if amount_match:
             try:
@@ -368,17 +375,15 @@ async def handle_receipt(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except ValueError:
                 num_tickets = 1
 
-        # Save Transaction to avoid reuse
         used_transactions.add(txn_id)
         save_used_txns()
 
-        # Issue Tickets Automatically
+        # Issue Tickets
         new_tickets, ref_id, ref_bonus = process_ticket_issuance(user_id, num_tickets)
         formatted_tickets = ", ".join([f"`{tn}`" for tn in new_tickets])
 
-        # Notify User Immediately
         success_msg = (
-            f"🎉 **ክፍያዎ በስኬት ተረጋግጧል! (Auto-Approved)**\n\n"
+            f"🎉 **ክፍያዎ ከስክሪንሹቱ/ከደረሰኙ ላይ በስኬት ተረጋግጧል!**\n\n"
             f"🔖 **Txn ID:** `{txn_id}`\n"
             f"🎟️ **የተቆረጠ ቲኬት ብዛት፦** {num_tickets}\n"
             f"🔢 **የትኬት ቁጥሮችዎ፦** {formatted_tickets}\n\n"
@@ -386,7 +391,7 @@ async def handle_receipt(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         await update.message.reply_text(success_msg, parse_mode="Markdown")
 
-        # Notify Referrer if exists
+        # Notify Referrer
         if ref_id and ref_bonus > 0:
             try:
                 await context.bot.send_message(
@@ -401,9 +406,9 @@ async def handle_receipt(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception as e:
                 logging.warning(f"Failed to notify referrer: {e}")
 
-        # Send Log Notice to Admin
+        # Send Admin Log
         admin_log = (
-            f"⚡ **አውቶማቲክ ክፍያ ተፀድቋል!**\n\n"
+            f"⚡ **አውቶማቲክ ክፍያ በስክሪንሹት ተፀድቋል!**\n\n"
             f"👤 ተጠቃሚ፦ {user.full_name} (@{user.username})\n"
             f"🆔 ID: `{user_id}`\n"
             f"🔖 Txn ID: `{txn_id}`\n"
@@ -415,10 +420,11 @@ async def handle_receipt(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logging.error(f"Failed to log auto-approval to admin: {e}")
 
     else:
-        # If it's an Image/PDF or non-recognized text format, forward to Admin for Manual Review
+        # Fallback to Admin Manual Review if OCR fails to detect Txn ID
         user_phone = users_db[user_id].get('phone', 'አልተመዘገበም')
         admin_msg = (
-            f"📥 **አዲስ የቲኬት ክፍያ ደረሰኝ/መልእክት ደርሷል!**\n\n"
+            f"📥 **አዲስ የቲኬት ክፍያ ደረሰኝ/መልእክት ደርሷል!**\n"
+            f"*(አውቶማቲክ ማንበብ ስላልተቻለ በእጅ እንዲያፀድቁ ተልኳል)*\n\n"
             f"👤 ላኪ፦ {user.full_name} (@{user.username})\n"
             f"🆔 ID: `{user_id}`\n"
             f"📞 ስልክ፦ `{user_phone}`\n\n"
@@ -433,7 +439,7 @@ async def handle_receipt(update: Update, context: ContextTypes.DEFAULT_TYPE):
             elif update.message.text:
                 await context.bot.send_message(chat_id=ADMIN_ID, text=f"💬 የተላከ የጽሁፍ መልዕክት፦\n`{update.message.text}`", parse_mode="Markdown")
             
-            await update.message.reply_text("✅ ደረሰኝዎ ደርሶናል! የትራንዛክሽን ቁጥሩን በጽሁፍ ካልላኩት አድሚኑ ደረሰኙን አይቶ በጥቂት ደቂቃዎች ውስጥ ያፀድቅልዎታል።")
+            await update.message.reply_text("✅ ደረሰኝዎ ደርሶናል! አድሚኑ ደረሰኙን አይቶ በጥቂት ደቂቃዎች ውስጥ ያፀድቅልዎታል።")
         except Exception as e:
             logging.error(f"Error forwarding receipt to admin: {e}")
 
