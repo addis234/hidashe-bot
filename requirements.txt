@@ -1,1 +1,4 @@
-python-telegram-bot>=20,<23
+python-telegram-bot
+pytesseract
+Pillow
+
