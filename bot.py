@@ -49,16 +49,16 @@ CBE_ACCOUNT = "1000723732108"
 TELEBIRR_NUMBER = "0914197335"
 
 PRIZES = [
-    "1ኛ ደረጃ፦ Core i7 14th Gen Laptop 💻",
-    "2ኛ ደረጃ፦ Samsung Galaxy A54 📱",
-    "3ኛ ደረጃ፦ Lenovo Tab P11 📲",
-    "4ኛ ደረጃ፦ 10,000 ETB 💵",
-    "5ኛ ደረጃ፦ 8,000 ETB 💵",
-    "6ኛ ደረጃ፦ 6,000 ETB 💵",
-    "7ኛ ደረጃ፦ 4,000 ETB 💵",
-    "8ኛ ደረጃ፦ 3,000 ETB 💵",
-    "9ኛ ደረጃ፦ 2,000 ETB 💵",
-    "10ኛ ደረጃ፦ 1,000 ETB 💵"
+    "1ኛ እጣ፦ Core i7 14th Gen Laptop 💻",
+    "2ኛ እጣ፦ Samsung Galaxy A54 📱",
+    "3ኛ እጣ፦ Lenovo Tab P11 📲",
+    "4ኛ እጣ፦ 10,000 ETB 💵",
+    "5ኛ እጣ፦ 8,000 ETB 💵",
+    "6ኛ እጣ፦ 6,000 ETB 💵",
+    "7ኛ እጣ፦ 4,000 ETB 💵",
+    "8ኛ እጣ፦ 3,000 ETB 💵",
+    "9ኛ እጣ፦ 2,000 ETB 💵",
+    "10ኛ እጣ፦ 1,000 ETB 💵"
 ]
 
 DB_FILE = "users_db.json"
