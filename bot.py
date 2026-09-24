@@ -41,6 +41,9 @@ def start_health_check_server():
 # -------------------------------------------------------------
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
 ADMIN_ID = 6722504980
+# ላይቭ እጣ ሲወጣ የቴሌግራም ቻናልዎ ላይ እንዲለቀቅ የቻናልዎን username እዚህ ያስገቡ (ለምሳሌ፦ "@HidasheLottery")
+# ቦቱን በቻናሉ ላይ Admin ማድረግዎን አይርሱ!
+PUBLIC_CHANNEL = os.environ.get("PUBLIC_CHANNEL", "") 
 
 TICKET_PRICE = 50  # ETB
 REFERRAL_BONUS = 10  # ETB per ticket bought by invited user
@@ -211,7 +214,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     try:
         if query.data == "buy_ticket":
-            # Check if user has registered phone number
             if not users_db[user_id].get('phone'):
                 phone_prompt = (
                     f"⚠️ **ስልክ ቁጥር ያስፈልጋል!**\n\n"
@@ -339,7 +341,6 @@ async def approve_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
             buyer = users_db[target_user_id]
             buyer['tickets'] += num_tickets
             
-            # Generate unique ticket numbers
             total_tickets_issued = sum(len(u.get('ticket_numbers', [])) for u in users_db.values())
             new_ticket_numbers = []
             for i in range(1, num_tickets + 1):
@@ -367,18 +368,6 @@ async def approve_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 except Exception as e:
                     logging.warning(f"Failed to notify referrer: {e}")
 
-                try:
-                    admin_ref_notice = (
-                        f"🔔 **የሪፈራል ኮሚሽን ማስታወቂያ!**\n\n"
-                        f"👤 ገዢ፦ {buyer['full_name']} (@{buyer['username']})\n"
-                        f"🎟️ የተቆረጠ ቲኬት፦ {num_tickets}\n\n"
-                        f"👥 ጋባዥ፦ {referrer['full_name']} (@{referrer['username']})\n"
-                        f"💰 ያገኘው ኮሚሽን፦ {bonus_amount} ETB"
-                    )
-                    await context.bot.send_message(chat_id=ADMIN_ID, text=admin_ref_notice, parse_mode="Markdown")
-                except Exception as e:
-                    logging.warning(f"Failed to send admin notification: {e}")
-
             save_db()
 
             formatted_tickets = ", ".join([f"`{tn}`" for tn in new_ticket_numbers])
@@ -396,7 +385,6 @@ async def approve_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception as e:
                 logging.warning(f"Failed to notify buyer: {e}")
                 
-            # Calculate total tickets sold across system
             overall_tickets = sum(len(u.get('ticket_numbers', [])) for u in users_db.values())
             await update.message.reply_text(
                 f"✅ ለተጠቃሚ {target_user_id} ({buyer['full_name']}) {num_tickets} ቲኬት ጸድቋል።\n"
@@ -429,13 +417,12 @@ async def show_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(stats_msg, parse_mode="Markdown")
 
 # -------------------------------------------------------------
-# 6. LOTTERY DRAW HANDLER (/draw)
+# 6. ENHANCED LIVE LOTTERY DRAW HANDLER (/draw)
 # -------------------------------------------------------------
 async def draw_lottery(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
 
-    # Collect all sold tickets: list of tuples -> (ticket_number, user_id)
     all_tickets = []
     for uid, udata in users_db.items():
         for t_num in udata.get('ticket_numbers', []):
@@ -445,22 +432,68 @@ async def draw_lottery(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"⚠️ እጣ ለማውጣት ቢያንስ 10 ቲኬቶች መቆረጥ አለባቸው። በአሁኑ ወቅት የተሸጡት ቲኬቶች ብዛት፦ {len(all_tickets)}")
         return
 
-    await update.message.reply_text("🎲 **የህዳሴ ሎተሪ እጣ የማውጣት ሂደት ተጀምሯል...**\nእባክዎን ትንሽ ይታገሱ!")
+    # 1. Countdown Animation
+    status_msg = await update.message.reply_text("🎲 **የህዳሴ ሎተሪ እጣ የማውጣት ሂደት ሊጀምር ነው!**\n\n⏳ 3...")
+    await asyncio.sleep(1)
+    await status_msg.edit_text("🎲 **የህዳሴ ሎተሪ እጣ የማውጣት ሂደት ሊጀምር ነው!**\n\n⏳ 2...")
+    await asyncio.sleep(1)
+    await status_msg.edit_text("🎲 **የህዳሴ ሎተሪ እጣ የማውጣት ሂደት ሊጀምር ነው!**\n\n⏳ 1...")
+    await asyncio.sleep(1)
 
-    # Randomly select 10 unique winning tickets
+    # Pick 10 unique winners
     winning_tickets = random.sample(all_tickets, 10)
     
-    admin_summary = "🎉 **የዕጣው አሸናፊዎች ዝርዝር፦**\n\n"
+    # Send start message to public channel if configured
+    if PUBLIC_CHANNEL:
+        try:
+            await context.bot.send_message(
+                chat_id=PUBLIC_CHANNEL,
+                text="🎉 **የህዳሴ ሎተሪ የቀጥታ የዕጣ ማውጣት ስርጭት ተጀምሯል!**\n\nመልካም እድል ለሁላችሁም! 🤞",
+                parse_mode="Markdown"
+            )
+        except Exception as e:
+            logging.error(f"Failed to send to public channel: {e}")
 
-    for rank, (ticket_num, uid) in enumerate(winning_tickets):
+    live_text = "🎉 **የህዳሴ ሎተሪ አሸናፊዎች ዝርዝር፦**\n\n"
+    await status_msg.edit_text(live_text + "🔄 *የመጀመሪያው እጣ እየወጣ ነው...*", parse_mode="Markdown")
+
+    # Reveal from 10th Place to 1st Place (Reverse order for dramatic effect)
+    for rank in range(9, -1, -1):
+        await asyncio.sleep(3)  # Delay between reveals for live excitement
+
+        ticket_num, uid = winning_tickets[rank]
         prize = PRIZES[rank]
         user_info = users_db[uid]
         full_name = user_info.get('full_name', 'አልተጠቀሰም')
         phone = user_info.get('phone', 'አልተመዘገበም')
         username = f"@{user_info.get('username')}" if user_info.get('username') else "የለውም"
 
-        # Notify winner
-        winner_msg = (
+        # Format win announcement
+        win_entry = (
+            f"🎖️ **{prize}**\n"
+            f"🎟️ ትኬት ቁጥር፦ `{ticket_num}`\n"
+            f"👤 አሸናፊ፦ {full_name} ({username})\n"
+            f"-----------------------------------\n"
+        )
+        
+        live_text += win_entry
+        
+        # Update Live message in Admin chat
+        await status_msg.edit_text(live_text + ("🔄 *ቀጣዩ እጣ እየወጣ ነው...*" if rank > 0 else "✅ **የዕጣ ማውጣት ሂደቱ ተጠናቋል!**"), parse_mode="Markdown")
+
+        # Post reveal to public channel if available
+        if PUBLIC_CHANNEL:
+            try:
+                await context.bot.send_message(
+                    chat_id=PUBLIC_CHANNEL,
+                    text=f"🔥 **አዲስ እጣ ወጣ!** 🔥\n\n{win_entry}",
+                    parse_mode="Markdown"
+                )
+            except Exception as e:
+                logging.error(f"Failed to post winner to public channel: {e}")
+
+        # Notify individual winner directly via bot
+        winner_private_msg = (
             f"🎉🎉 **እንኳን ደስ አለዎት!** 🎉🎉\n\n"
             f"በህዳሴ ሎተሪ እጣ አሸናፊ ሆነዋል!\n\n"
             f"🎟️ **የአሸናፊ ትኬት ቁጥርዎ፦** `{ticket_num}`\n"
@@ -468,21 +501,18 @@ async def draw_lottery(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"ሽልማቱን ለመረከብ አድሚኑ በስልክ ቁጥርዎ ወይም በቴሌግራም ያገኝዎታል።"
         )
         try:
-            await context.bot.send_message(chat_id=uid, text=winner_msg, parse_mode="Markdown")
+            await context.bot.send_message(chat_id=uid, text=winner_private_msg, parse_mode="Markdown")
         except Exception as e:
-            logging.error(f"Failed to send win notification to {uid}: {e}")
+            logging.error(f"Failed to notify winner {uid}: {e}")
 
-        # Add to admin summary
-        admin_summary += (
-            f"🎖️ **{prize}**\n"
-            f"👤 አሸናፊ፦ {full_name} ({username})\n"
-            f"🎟️ የትኬት ቁጥር፦ `{ticket_num}`\n"
-            f"📞 ስልክ፦ `{phone}`\n"
-            f"-----------------------------------\n"
-        )
+    # Summary report to Admin
+    admin_final_report = live_text + "\n📞 **የአሸናፊዎች ስልክ ቁጥር ዝርዝር፦**\n"
+    for rank in range(10):
+        t_num, u_id = winning_tickets[rank]
+        u_info = users_db[u_id]
+        admin_final_report += f"▫️ {PRIZES[rank]} -> {u_info.get('full_name')} (`{u_info.get('phone')}`)\n"
 
-    # Send winners list to Admin
-    await context.bot.send_message(chat_id=ADMIN_ID, text=admin_summary, parse_mode="Markdown")
+    await context.bot.send_message(chat_id=ADMIN_ID, text=admin_final_report, parse_mode="Markdown")
 
 # -------------------------------------------------------------
 # 7. MAIN EXECUTION
