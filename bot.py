@@ -233,7 +233,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text(msg, parse_mode="Markdown", reply_markup=get_back_keyboard())
 
         elif query.data == "show_prizes":
-            prizes_text = "🏆 **የህዳሴ ሎተሪ 10 የሽልማት ደረጃዎች፦**\n\n"
+            prizes_text = "🏆 **የህዳሴ ሎተሪ 10 የሽልማት እጣዎች፦**\n\n"
             for prize in PRIZES:
                 prizes_text += f"{prize}\n"
             await query.edit_message_text(prizes_text, parse_mode="Markdown", reply_markup=get_back_keyboard())
@@ -396,7 +396,13 @@ async def approve_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception as e:
                 logging.warning(f"Failed to notify buyer: {e}")
                 
-            await update.message.reply_text(f"✅ ለተጠቃሚ {target_user_id} ({buyer['full_name']}) {num_tickets} ቲኬት ጸድቋል።\nየትኬት ቁጥሮች፦ {', '.join(new_ticket_numbers)}")
+            # Calculate total tickets sold across system
+            overall_tickets = sum(len(u.get('ticket_numbers', [])) for u in users_db.values())
+            await update.message.reply_text(
+                f"✅ ለተጠቃሚ {target_user_id} ({buyer['full_name']}) {num_tickets} ቲኬት ጸድቋል።\n"
+                f"የትኬት ቁጥሮች፦ {', '.join(new_ticket_numbers)}\n\n"
+                f"📊 **አጠቃላይ እስካሁን የተሸጡ ቲኬቶች፦ {overall_tickets}**"
+            )
         else:
             await update.message.reply_text(f"❌ ተጠቃሚ {target_user_id} በዳታቤዝ ውስጥ አልተገኘም።")
             
@@ -404,7 +410,26 @@ async def approve_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ እባክዎን በትክክለኛው ፎርማት ያስገቡ፦ `/approve <USER_ID> <ብዛት>`", parse_mode="Markdown")
 
 # -------------------------------------------------------------
-# 5. LOTTERY DRAW HANDLER (/draw)
+# 5. ADMIN STATS HANDLER (/stats)
+# -------------------------------------------------------------
+async def show_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        return
+
+    total_users = len(users_db)
+    total_tickets = sum(len(u.get('ticket_numbers', [])) for u in users_db.values())
+    total_revenue = total_tickets * TICKET_PRICE
+
+    stats_msg = (
+        f"📊 **የህዳሴ ሎተሪ አጠቃላይ ስታቲስቲክስ፦**\n\n"
+        f"👥 አጠቃላይ የተመዘገቡ ተጠቃሚዎች፦ **{total_users}**\n"
+        f"🎟️ አጠቃላይ የተሸጡ (የተቆረጡ) ቲኬቶች፦ **{total_tickets}**\n"
+        f"💰 አጠቃላይ የተሰበሰበ ገቢ፦ **{total_revenue:,} ETB**"
+    )
+    await update.message.reply_text(stats_msg, parse_mode="Markdown")
+
+# -------------------------------------------------------------
+# 6. LOTTERY DRAW HANDLER (/draw)
 # -------------------------------------------------------------
 async def draw_lottery(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
@@ -460,7 +485,7 @@ async def draw_lottery(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await context.bot.send_message(chat_id=ADMIN_ID, text=admin_summary, parse_mode="Markdown")
 
 # -------------------------------------------------------------
-# 6. MAIN EXECUTION
+# 7. MAIN EXECUTION
 # -------------------------------------------------------------
 def main():
     threading.Thread(target=start_health_check_server, daemon=True).start()
@@ -473,6 +498,7 @@ def main():
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("approve", approve_payment))
+    app.add_handler(CommandHandler("stats", show_stats))
     app.add_handler(CommandHandler("draw", draw_lottery))
     
     # Contact Handler
