@@ -38,7 +38,7 @@ def start_health_check_server():
 # 2. BOT CONFIGURATION & DATA
 # -------------------------------------------------------------
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
-ADMIN_ID = 6722504980  # የተስተካከለ የአድሚን ID
+ADMIN_ID = 6722504980
 
 TICKET_PRICE = 50  # ETB
 REFERRAL_BONUS = 10  # ETB per ticket bought by invited user
@@ -62,17 +62,31 @@ PRIZES = [
 ]
 
 # Database in memory
-# users_db format: user_id: {'tickets': count, 'balance': ref_earnings, 'referrer': id, 'username': str, 'full_name': str}
 users_db = {}
 
 # -------------------------------------------------------------
-# 3. BOT HANDLERS
+# 3. HELPER FUNCTIONS
+# -------------------------------------------------------------
+def get_main_menu_keyboard():
+    keyboard = [
+        [InlineKeyboardButton("🎟️ ቲኬት ቁረጥ", callback_data="buy_ticket")],
+        [InlineKeyboardButton("🎁 የሽልማት ዝርዝር", callback_data="show_prizes")],
+        [InlineKeyboardButton("👥 የሪፈራል ሊንክ", callback_data="get_referral")],
+        [InlineKeyboardButton("💰 የኔ ሂሳብ (Balance)", callback_data="my_balance")]
+    ]
+    return InlineKeyboardMarkup(keyboard)
+
+def get_back_keyboard():
+    keyboard = [[InlineKeyboardButton("🔙 ወደ ዋናው ማውጫ", callback_data="main_menu")]]
+    return InlineKeyboardMarkup(keyboard)
+
+# -------------------------------------------------------------
+# 4. BOT HANDLERS
 # -------------------------------------------------------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     user_id = user.id
     
-    # Check for referral parameter
     args = context.args
     if user_id not in users_db:
         users_db[user_id] = {
@@ -96,79 +110,83 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"እባክዎን ከታች ካሉት አማራጮች አንዱን ይምረጡ፦"
     )
     
-    keyboard = [
-        [InlineKeyboardButton("🎟️ ቲኬት ቁረጥ", callback_data="buy_ticket")],
-        [InlineKeyboardButton("🎁 የሽልማት ዝርዝር", callback_data="show_prizes")],
-        [InlineKeyboardButton("👥 የሪፈራል ሊንክ", callback_data="get_referral")],
-        [InlineKeyboardButton("💰 የኔ ሂሳብ (Balance)", callback_data="my_balance")]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
     if update.message:
-        await update.message.reply_text(welcome_text, parse_mode="Markdown", reply_markup=reply_markup)
-    elif update.callback_query:
-        await update.callback_query.message.edit_text(welcome_text, parse_mode="Markdown", reply_markup=reply_markup)
+        await update.message.reply_text(welcome_text, parse_mode="Markdown", reply_markup=get_main_menu_keyboard())
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
+    await query.answer()  # Loading indicator ማጥፊያ
     user_id = query.from_user.id
 
-    if query.data == "buy_ticket":
-        msg = (
-            f"🎟️ **ቲኬት ለመቁረጥ፦**\n\n"
-            f"የአንድ ቲኬት ዋጋ **{TICKET_PRICE} ብር** ሲሆን የፈለጉትን ያህል ብዛት መቁረጥ ይችላሉ።\n\n"
-            f"እባክዎን ጠቅላላ ክፍያውን ከታች ባሉት የክፍያ አማራጮች ይላኩ፦\n\n"
-            f"▫️ **በCBE (የኢትዮጵያ ንግድ ባንክ)፦**\n"
-            f"`{CBE_ACCOUNT}`\n\n"
-            f"▫️ **በቴሌብር (Telebirr)፦**\n"
-            f"`{TELEBIRR_NUMBER}`\n\n"
-            f"ክፍያውን እንደፈጸሙ፣ የላኩበትን **ደረሰኝ (Screenshot/PDF)** ወይም የትራንስፎርሜሽን ቁጥር እዚህ ይላኩ።"
-        )
-        keyboard = [[InlineKeyboardButton("🔙 ወደ ዋናው ማውጫ", callback_data="main_menu")]]
-        await query.message.edit_text(msg, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+    if user_id not in users_db:
+        users_db[user_id] = {
+            'tickets': 0, 
+            'balance': 0, 
+            'referrer': None,
+            'username': query.from_user.username or "",
+            'full_name': query.from_user.full_name or ""
+        }
 
-    elif query.data == "show_prizes":
-        prizes_text = "🏆 **የህዳሴ ሎተሪ 10 የሽልማት ደረጃዎች፦**\n\n"
-        for prize in PRIZES:
-            prizes_text += f"{prize}\n"
-        
-        keyboard = [[InlineKeyboardButton("🔙 ወደ ዋናው ማውጫ", callback_data="main_menu")]]
-        await query.message.edit_text(prizes_text, reply_markup=InlineKeyboardMarkup(keyboard))
+    try:
+        if query.data == "buy_ticket":
+            msg = (
+                f"🎟️ **ቲኬት ለመቁረጥ፦**\n\n"
+                f"የአንድ ቲኬት ዋጋ **{TICKET_PRICE} ብር** ሲሆን የፈለጉትን ያህል ብዛት መቁረጥ ይችላሉ።\n\n"
+                f"እባክዎን ጠቅላላ ክፍያውን ከታች ባሉት የክፍያ አማራጮች ይላኩ፦\n\n"
+                f"▫️ **በCBE (የኢትዮጵያ ንግድ ባንክ)፦**\n"
+                f"`{CBE_ACCOUNT}`\n\n"
+                f"▫️ **በቴሌብር (Telebirr)፦**\n"
+                f"`{TELEBIRR_NUMBER}`\n\n"
+                f"ክፍያውን እንደፈጸሙ፣ የላኩበትን **ደረሰኝ (Screenshot/PDF)** ወይም የትራንስፎርሜሽን ቁጥር እዚህ ይላኩ።"
+            )
+            await query.edit_message_text(msg, parse_mode="Markdown", reply_markup=get_back_keyboard())
 
-    elif query.data == "get_referral":
-        user_data = users_db.get(user_id, {'tickets': 0})
-        
-        # ⚠️ ቲኬት ያላስቆረጠ ሰው የሪፈራል ሊንክ አያገኝም
-        if user_data.get('tickets', 0) < 1:
-            msg = (
-                f"❌ **የሪፈራል ሊንክ ማግኘት አልተቻለም!**\n\n"
-                f"የሪፈራል ሊንክ ለማግኘትና ሰዎችን በመጋበዝ ኮሚሽን ለማግኘት **ቢያንስ 1 ቲኬት** መቁረጥ ይኖርብዎታል።\n\n"
-                f"እባክዎን መጀመሪያ ቲኬት ይቁረጡ!"
-            )
-        else:
-            bot_username = context.bot.username
-            ref_link = f"https://t.me/{bot_username}?start={user_id}"
-            msg = (
-                f"🔗 **የእርስዎ የሪፈራል ሊንክ፦**\n`{ref_link}`\n\n"
-                f"ይህንን ሊንክ ለወዳጅ ዘመድዎ ያጋሩ! በእርስዎ ሊንክ ገብተው ሰዎች በሚቆርጡት እያንዳንዱ ቲኬት **{REFERRAL_BONUS} ብር** ኮሚሽን ያገኛሉ።"
-            )
+        elif query.data == "show_prizes":
+            prizes_text = "🏆 **የህዳሴ ሎተሪ 10 የሽልማት ደረጃዎች፦**\n\n"
+            for prize in PRIZES:
+                prizes_text += f"{prize}\n"
+            await query.edit_message_text(prizes_text, parse_mode="Markdown", reply_markup=get_back_keyboard())
+
+        elif query.data == "get_referral":
+            user_data = users_db.get(user_id, {'tickets': 0})
             
-        keyboard = [[InlineKeyboardButton("🔙 ወደ ዋናው ማውጫ", callback_data="main_menu")]]
-        await query.message.edit_text(msg, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+            if user_data.get('tickets', 0) < 1:
+                msg = (
+                    f"❌ **የሪፈራል ሊንክ ማግኘት አልተቻለም!**\n\n"
+                    f"የሪፈራል ሊንክ ለማግኘትና ሰዎችን በመጋበዝ ኮሚሽን ለማግኘት **ቢያንስ 1 ቲኬት** መቁረጥ ይኖርብዎታል።\n\n"
+                    f"እባክዎን መጀመሪያ ቲኬት ይቁረጡ!"
+                )
+            else:
+                bot_username = context.bot.username
+                ref_link = f"https://t.me/{bot_username}?start={user_id}"
+                msg = (
+                    f"🔗 **የእርስዎ የሪፈራል ሊንክ፦**\n`{ref_link}`\n\n"
+                    f"ይህንን ሊንክ ለወዳጅ ዘመድዎ ያጋሩ! በእርስዎ ሊንክ ገብተው ሰዎች በሚቆርጡት እያንዳንዱ ቲኬት **{REFERRAL_BONUS} ብር** ኮሚሽን ያገኛሉ።"
+                )
+            await query.edit_message_text(msg, parse_mode="Markdown", reply_markup=get_back_keyboard())
 
-    elif query.data == "my_balance":
-        user_data = users_db.get(user_id, {'tickets': 0, 'balance': 0})
-        msg = (
-            f"📊 **የእርስዎ መረጃ፦**\n\n"
-            f"🎟️ የቆረጡት ቲኬት ብዛት፦ **{user_data['tickets']}**\n"
-            f"💰 ከሪፈራል ያገኙት ቦነስ፦ **{user_data['balance']} ETB**"
-        )
-        keyboard = [[InlineKeyboardButton("🔙 ወደ ዋናው ማውጫ", callback_data="main_menu")]]
-        await query.message.edit_text(msg, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+        elif query.data == "my_balance":
+            user_data = users_db.get(user_id, {'tickets': 0, 'balance': 0})
+            msg = (
+                f"📊 **የእርስዎ መረጃ፦**\n\n"
+                f"🎟️ የቆረጡት ቲኬት ብዛት፦ **{user_data['tickets']}**\n"
+                f"💰 ከሪፈራል ያገኙት ቦነስ፦ **{user_data['balance']} ETB**"
+            )
+            await query.edit_message_text(msg, parse_mode="Markdown", reply_markup=get_back_keyboard())
 
-    elif query.data == "main_menu":
-        await start(update, context)
+        elif query.data == "main_menu":
+            welcome_text = (
+                f"እንኳን ወደ **ህዳሴ ሎተሪ** በደህና መጡ! 🎟️\n\n"
+                f"የአንድ ቲኬት ዋጋ፦ **{TICKET_PRICE} ብር**\n"
+                f"የፈለጉትን ያህል ቲኬት መግዛት ይችላሉ!\n\n"
+                f"💡 **ማስታወሻ፦** ቲኬት ሲቆርጡ የራስዎ የሪፈራል ሊንክ ይፈጠርልዎታል። "
+                f"በእርስዎ ሊንክ ገብተው ሰዎች ቲኬት ሲቆርጡ ለእያንዳንዱ ቲኬት **{REFERRAL_BONUS} ብር** ኮሚሽን ያገኛሉ!\n\n"
+                f"እባክዎን ከታች ካሉት አማራጮች አንዱን ይምረጡ፦"
+            )
+            await query.edit_message_text(welcome_text, parse_mode="Markdown", reply_markup=get_main_menu_keyboard())
+
+    except Exception as e:
+        logging.error(f"Error handling button click: {e}")
 
 async def handle_receipt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
@@ -183,7 +201,6 @@ async def handle_receipt(update: Update, context: ContextTypes.DEFAULT_TYPE):
             'full_name': user.full_name or ""
         }
     else:
-        # Update details in case username changed
         users_db[user_id]['username'] = user.username or ""
         users_db[user_id]['full_name'] = user.full_name or ""
 
@@ -229,7 +246,6 @@ async def approve_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 bonus_amount = num_tickets * REFERRAL_BONUS
                 referrer['balance'] += bonus_amount
                 
-                # 1. ለጋባዡ መልዕክት መላክ
                 try:
                     await context.bot.send_message(
                         chat_id=referrer_id,
@@ -243,7 +259,6 @@ async def approve_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 except Exception as e:
                     logging.warning(f"Failed to notify referrer: {e}")
 
-                # 2. ለአድሚኑ (ለእርስዎ) ማስታወቂያ መላክ
                 try:
                     admin_ref_notice = (
                         f"🔔 **የሪፈራል ኮሚሽን ማስታወቂያ!**\n\n"
@@ -256,7 +271,6 @@ async def approve_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 except Exception as e:
                     logging.warning(f"Failed to send admin notification: {e}")
 
-            # ለቲኬት ገዢው ማረጋገጫ መላክ
             try:
                 await context.bot.send_message(
                     chat_id=target_user_id,
@@ -278,7 +292,7 @@ async def approve_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ እባክዎን በትክክለኛው ፎርማት ያስገቡ፦ `/approve <USER_ID> <ብዛት>`", parse_mode="Markdown")
 
 # -------------------------------------------------------------
-# 4. MAIN EXECUTION
+# 5. MAIN EXECUTION
 # -------------------------------------------------------------
 def main():
     threading.Thread(target=start_health_check_server, daemon=True).start()
