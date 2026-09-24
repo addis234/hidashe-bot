@@ -1,6 +1,7 @@
 import os
 import asyncio
 import logging
+import json
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import threading
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -35,7 +36,7 @@ def start_health_check_server():
     server.serve_forever()
 
 # -------------------------------------------------------------
-# 2. BOT CONFIGURATION & DATA
+# 2. BOT CONFIGURATION & JSON DATABASE
 # -------------------------------------------------------------
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
 ADMIN_ID = 6722504980
@@ -43,11 +44,9 @@ ADMIN_ID = 6722504980
 TICKET_PRICE = 50  # ETB
 REFERRAL_BONUS = 10  # ETB per ticket bought by invited user
 
-# Payment Details
 CBE_ACCOUNT = "1000723732108"
 TELEBIRR_NUMBER = "0914197335"
 
-# Specific Prize Tiers
 PRIZES = [
     "1ኛ ደረጃ፦ Core i7 14th Gen Laptop 💻",
     "2ኛ ደረጃ፦ Samsung Galaxy A54 📱",
@@ -61,11 +60,29 @@ PRIZES = [
     "10ኛ ደረጃ፦ 1,000 ETB 💵"
 ]
 
-# Database in memory
-users_db = {}
+DB_FILE = "users_db.json"
+
+def load_db():
+    if os.path.exists(DB_FILE):
+        try:
+            with open(DB_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                return {int(k): v for k, v in data.items()}
+        except Exception as e:
+            logging.error(f"Error loading DB: {e}")
+    return {}
+
+def save_db():
+    try:
+        with open(DB_FILE, "w", encoding="utf-8") as f:
+            json.dump(users_db, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        logging.error(f"Error saving DB: {e}")
+
+users_db = load_db()
 
 # -------------------------------------------------------------
-# 3. HELPER FUNCTIONS
+# 3. KEYBOARD HELPER FUNCTIONS
 # -------------------------------------------------------------
 def get_main_menu_keyboard():
     keyboard = [
@@ -100,6 +117,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             referrer_id = int(args[0])
             if referrer_id != user_id and referrer_id in users_db:
                 users_db[user_id]['referrer'] = referrer_id
+        save_db()
 
     welcome_text = (
         f"እንኳን ወደ **ህዳሴ ሎተሪ** በደህና መጡ! 🎟️\n\n"
@@ -115,7 +133,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()  # Loading indicator ማጥፊያ
+    await query.answer()
     user_id = query.from_user.id
 
     if user_id not in users_db:
@@ -126,6 +144,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             'username': query.from_user.username or "",
             'full_name': query.from_user.full_name or ""
         }
+        save_db()
 
     try:
         if query.data == "buy_ticket":
@@ -203,6 +222,7 @@ async def handle_receipt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         users_db[user_id]['username'] = user.username or ""
         users_db[user_id]['full_name'] = user.full_name or ""
+    save_db()
 
     admin_msg = (
         f"📥 **አዲስ የቲኬት ክፍያ ደረሰኝ ደርሷል!**\n\n"
@@ -224,7 +244,7 @@ async def handle_receipt(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("✅ ደረሰኝዎ ለቁጥጥር ለአድሚን ተልኳል! ከተረጋገጠ በኋላ ቲኬትዎ ይላክልዎታል።")
     except Exception as e:
         logging.error(f"Error sending receipt to admin: {e}")
-        await update.message.reply_text("❌ ደረሰኙን ለቀጣሪ መላክ አልተቻለም። እባክዎን አድሚኑ ቦቱን /start ማድረጉን ያረጋግጡ።")
+        await update.message.reply_text("❌ ደረሰኙን ለቁጥጥር መላክ አልተቻለም። እባክዎን አድሚኑ ቦቱን /start ማድረጉን ያረጋግጡ።")
 
 async def approve_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
@@ -271,6 +291,8 @@ async def approve_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 except Exception as e:
                     logging.warning(f"Failed to send admin notification: {e}")
 
+            save_db()
+
             try:
                 await context.bot.send_message(
                     chat_id=target_user_id,
@@ -307,6 +329,7 @@ def main():
     app.add_handler(CommandHandler("approve", approve_payment))
     app.add_handler(CallbackQueryHandler(button_handler))
     
+    # ⚠️ የተስተካከለ Receipt Filter
     receipt_filter = filters.PHOTO | filters.Document.ALL | filters.TEXT
     app.add_handler(MessageHandler(receipt_filter & ~filters.COMMAND, handle_receipt))
 
