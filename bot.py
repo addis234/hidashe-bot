@@ -6,6 +6,8 @@ import random
 import re
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import threading
+from PIL import Image
+import pytesseract
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, ReplyKeyboardMarkup, ReplyKeyboardRemove
 from telegram.ext import (
     Application,
@@ -242,7 +244,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     try:
         if query.data == "buy_ticket":
-            # ስልክ ቁጥር አለመኖሩን ማረጋገጫ
             if not users_db[user_id].get('phone'):
                 phone_prompt = (
                     f"⚠️ **ስልክ ቁጥር ያስፈልጋል!**\n\n"
@@ -331,7 +332,6 @@ async def handle_receipt(update: Update, context: ContextTypes.DEFAULT_TYPE):
         }
         save_db()
 
-    # ተጠቃሚው ስልክ ቁጥር ሳይመዘግብ ደረሰኝ/ትራንዛክሽን ቢልክ ስልክ ቁጥሩን እንዲልክ መጠየቂያ
     if not users_db[user_id].get('phone'):
         phone_prompt = (
             f"⚠️ **ስልክ ቁጥር አልተመዘገበም!**\n\n"
@@ -343,7 +343,21 @@ async def handle_receipt(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     text_content = update.message.text or update.message.caption or ""
 
-    # Check for Transaction ID in text/SMS
+    # ተጠቃሚው ፎቶ ከላከ OCR በመጠቀም ጽሁፉን ማንበብ
+    if update.message.photo:
+        try:
+            photo_file = await update.message.photo[-1].get_file()
+            file_path = f"temp_{user_id}.jpg"
+            await photo_file.download_to_drive(file_path)
+
+            extracted_text = pytesseract.image_to_string(Image.open(file_path))
+            text_content += " " + extracted_text
+            if os.path.exists(file_path):
+                os.remove(file_path)
+        except Exception as e:
+            logging.error(f"OCR Error: {e}")
+
+    # ትራንዛክሽን ቁጥር መፈለግ (CBE ወይም Telebirr Txn ID)
     txn_match = re.search(r'\b(FT[A-Z0-9]{8,12}|[A-Z0-9]{10,14})\b', text_content, re.IGNORECASE)
 
     if txn_match:
@@ -353,14 +367,21 @@ async def handle_receipt(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("⚠️ **ይህ የትራንዛክሽን ቁጥር ቀደም ሲል ጥቅም ላይ ውሏል!**\nእባክዎን አዲስ ክፍያ በመፈጸም ትክክለኛ ደረሰኝ ያስገቡ።", parse_mode="Markdown")
             return
 
-        amount_match = re.search(r'(?:ETB|ብር)?\s*([\d,]+(?:\.\d{1,2})?)', text_content, re.IGNORECASE)
-        num_tickets = 1
-        if amount_match:
+        # የከፈሉትን የብር መጠን በመፈለግ የቲኬት ብዛት ማሰላት
+        # ቁጥሩን ከትራንዛክሽን ID ውጭ ካሉ የፅሁፍ ክፍሎች ብቻ መፈለግ
+        clean_text_for_amount = re.sub(r'FT[A-Z0-9]{8,12}|[A-Z0-9]{10,14}', '', text_content, flags=re.IGNORECASE)
+        amount_matches = re.findall(r'(?:ETB|ብር)?\s*(\d+(?:\.\d{1,2})?)', clean_text_for_amount, re.IGNORECASE)
+        
+        num_tickets = 1  # Default 1 ቲኬት
+        if amount_matches:
             try:
-                paid_amount = float(amount_match.group(1).replace(',', ''))
-                num_tickets = int(paid_amount // TICKET_PRICE)
-                if num_tickets < 1:
-                    num_tickets = 1
+                # በጽሁፉ ውስጥ የተገኘውን የገንዘብ መጠን መውሰድ
+                possible_amounts = [float(a) for a in amount_matches if float(a) >= TICKET_PRICE]
+                if possible_amounts:
+                    paid_amount = possible_amounts[0]
+                    calculated = int(paid_amount // TICKET_PRICE)
+                    if calculated >= 1:
+                        num_tickets = calculated
             except ValueError:
                 num_tickets = 1
 
@@ -407,7 +428,6 @@ async def handle_receipt(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logging.error(f"Failed to log auto-approval to admin: {e}")
 
     else:
-        # If user sent a photo screenshot or text without Txn ID -> Forward to Admin
         user_phone = users_db[user_id].get('phone', 'አልተመዘገበም')
         admin_msg = (
             f"📥 **አዲስ የቲኬት ክፍያ ደረሰኝ/መልእክት ደርሷል!**\n\n"
@@ -504,7 +524,7 @@ async def show_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(stats_msg, parse_mode="Markdown")
 
 # -------------------------------------------------------------
-# 7. LIVE LOTTERY DRAW HANDLER (/draw)
+# 7. LIVE LOTTERY DRAW HANDLER (/draw) & RESET TICKETS
 # -------------------------------------------------------------
 async def draw_lottery(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
@@ -590,6 +610,19 @@ async def draw_lottery(update: Update, context: ContextTypes.DEFAULT_TYPE):
         admin_final_report += f"▫️ {PRIZES[rank]} -> {u_info.get('full_name')} (`{u_info.get('phone')}`)\n"
 
     await context.bot.send_message(chat_id=ADMIN_ID, text=admin_final_report, parse_mode="Markdown")
+
+    # -------------------------------------------------------------
+    # እጣው ከተጠናቀቀ በኋላ የሁሉንም ተጠቃሚዎች ቲኬቶች ወደ 0 የመመለስ ሂደት (RESET)
+    # -------------------------------------------------------------
+    for u_id in users_db:
+        users_db[u_id]['tickets'] = 0
+        users_db[u_id]['ticket_numbers'] = []
+    
+    used_transactions.clear()
+    save_db()
+    save_used_txns()
+
+    await context.bot.send_message(chat_id=ADMIN_ID, text="🔄 **የዕጣ ማውጣት ሂደቱ ስለተጠናቀቀ የሁሉም ተጠቃሚዎች ቲኬቶች ወደ 0 ተመልሰዋል። ለቀጣይ ዙር ዝግጁ ነው!**", parse_mode="Markdown")
 
 # -------------------------------------------------------------
 # 8. MAIN EXECUTION
