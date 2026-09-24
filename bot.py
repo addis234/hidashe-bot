@@ -38,12 +38,10 @@ def start_health_check_server():
 # 2. BOT CONFIGURATION & DATA
 # -------------------------------------------------------------
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
-
-# ⚠️ እዚህ ቦታ ላይ ከ @userinfobot ያገኙትን ትክክለኛ ID ያስገቡ
-ADMIN_ID = 6722504980  # <-- የራስዎን ID እዚህ ጋር ያረጋግጡ
+ADMIN_ID = 6722504980  # የተስተካከለ የአድሚን ID
 
 TICKET_PRICE = 50  # ETB
-REFERRAL_BONUS = 10  # ETB
+REFERRAL_BONUS = 10  # ETB per ticket bought by invited user
 
 # Payment Details
 CBE_ACCOUNT = "1000723732108"
@@ -63,6 +61,8 @@ PRIZES = [
     "10ኛ ደረጃ፦ 1,000 ETB 💵"
 ]
 
+# Database in memory
+# users_db format: user_id: {'tickets': count, 'balance': ref_earnings, 'referrer': id, 'username': str, 'full_name': str}
 users_db = {}
 
 # -------------------------------------------------------------
@@ -72,14 +72,15 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     user_id = user.id
     
+    # Check for referral parameter
     args = context.args
     if user_id not in users_db:
         users_db[user_id] = {
             'tickets': 0, 
             'balance': 0, 
             'referrer': None,
-            'username': user.username,
-            'full_name': user.full_name
+            'username': user.username or "",
+            'full_name': user.full_name or ""
         }
         if args and args[0].isdigit():
             referrer_id = int(args[0])
@@ -89,7 +90,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     welcome_text = (
         f"እንኳን ወደ **ህዳሴ ሎተሪ** በደህና መጡ! 🎟️\n\n"
         f"የአንድ ቲኬት ዋጋ፦ **{TICKET_PRICE} ብር**\n"
-        f"ጓደኞችዎን በመጋበዝ የእያንዳንዱ ገዢ **{REFERRAL_BONUS} ብር** ኮሚሽን ያግኙ!\n\n"
+        f"የፈለጉትን ያህል ቲኬት መግዛት ይችላሉ!\n\n"
+        f"💡 **ማስታወሻ፦** ቲኬት ሲቆርጡ የራስዎ የሪፈራል ሊንክ ይፈጠርልዎታል። "
+        f"በእርስዎ ሊንክ ገብተው ሰዎች ቲኬት ሲቆርጡ ለእያንዳንዱ ቲኬት **{REFERRAL_BONUS} ብር** ኮሚሽን ያገኛሉ!\n\n"
         f"እባክዎን ከታች ካሉት አማራጮች አንዱን ይምረጡ፦"
     )
     
@@ -114,7 +117,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if query.data == "buy_ticket":
         msg = (
             f"🎟️ **ቲኬት ለመቁረጥ፦**\n\n"
-            f"እባክዎን **{TICKET_PRICE} ብር** ከታች ባሉት የክፍያ አማራጮች ይላኩ፦\n\n"
+            f"የአንድ ቲኬት ዋጋ **{TICKET_PRICE} ብር** ሲሆን የፈለጉትን ያህል ብዛት መቁረጥ ይችላሉ።\n\n"
+            f"እባክዎን ጠቅላላ ክፍያውን ከታች ባሉት የክፍያ አማራጮች ይላኩ፦\n\n"
             f"▫️ **በCBE (የኢትዮጵያ ንግድ ባንክ)፦**\n"
             f"`{CBE_ACCOUNT}`\n\n"
             f"▫️ **በቴሌብር (Telebirr)፦**\n"
@@ -133,12 +137,23 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.edit_text(prizes_text, reply_markup=InlineKeyboardMarkup(keyboard))
 
     elif query.data == "get_referral":
-        bot_username = context.bot.username
-        ref_link = f"https://t.me/{bot_username}?start={user_id}"
-        msg = (
-            f"🔗 **የእርስዎ የሪፈራል ሊንክ፦**\n`{ref_link}`\n\n"
-            f"ይህንን ሊንክ ለወዳጅ ዘመድዎ ያጋሩ! በእርስዎ ሊንክ ገብተው ቲኬት ሲቆርጡ **{REFERRAL_BONUS} ብር** ወደ ሂሳብዎ ይገባል።"
-        )
+        user_data = users_db.get(user_id, {'tickets': 0})
+        
+        # ⚠️ ቲኬት ያላስቆረጠ ሰው የሪፈራል ሊንክ አያገኝም
+        if user_data.get('tickets', 0) < 1:
+            msg = (
+                f"❌ **የሪፈራል ሊንክ ማግኘት አልተቻለም!**\n\n"
+                f"የሪፈራል ሊንክ ለማግኘትና ሰዎችን በመጋበዝ ኮሚሽን ለማግኘት **ቢያንስ 1 ቲኬት** መቁረጥ ይኖርብዎታል።\n\n"
+                f"እባክዎን መጀመሪያ ቲኬት ይቁረጡ!"
+            )
+        else:
+            bot_username = context.bot.username
+            ref_link = f"https://t.me/{bot_username}?start={user_id}"
+            msg = (
+                f"🔗 **የእርስዎ የሪፈራል ሊንክ፦**\n`{ref_link}`\n\n"
+                f"ይህንን ሊንክ ለወዳጅ ዘመድዎ ያጋሩ! በእርስዎ ሊንክ ገብተው ሰዎች በሚቆርጡት እያንዳንዱ ቲኬት **{REFERRAL_BONUS} ብር** ኮሚሽን ያገኛሉ።"
+            )
+            
         keyboard = [[InlineKeyboardButton("🔙 ወደ ዋናው ማውጫ", callback_data="main_menu")]]
         await query.message.edit_text(msg, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
 
@@ -164,9 +179,13 @@ async def handle_receipt(update: Update, context: ContextTypes.DEFAULT_TYPE):
             'tickets': 0, 
             'balance': 0, 
             'referrer': None,
-            'username': user.username,
-            'full_name': user.full_name
+            'username': user.username or "",
+            'full_name': user.full_name or ""
         }
+    else:
+        # Update details in case username changed
+        users_db[user_id]['username'] = user.username or ""
+        users_db[user_id]['full_name'] = user.full_name or ""
 
     admin_msg = (
         f"📥 **አዲስ የቲኬት ክፍያ ደረሰኝ ደርሷል!**\n\n"
@@ -174,7 +193,7 @@ async def handle_receipt(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"🆔 ID: `{user_id}`\n\n"
         f"እባክዎን ደረሰኙን ካረጋገጡ በኋላ በአንዱ መንገድ ያፅድቁ፦\n"
         f"1. `/approve {user_id}` (ለ 1 ቲኬት)\n"
-        f"2. `/approve {user_id} <ብዛት>` (ለብዙ ቲኬት)"
+        f"2. `/approve {user_id} <ብዛት>` (ለምሳሌ፦ `/approve {user_id} 5` ለ 5 ቲኬት)"
     )
     
     try:
@@ -201,32 +220,57 @@ async def approve_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
             num_tickets = int(context.args[1])
 
         if target_user_id in users_db:
-            users_db[target_user_id]['tickets'] += num_tickets
+            buyer = users_db[target_user_id]
+            buyer['tickets'] += num_tickets
             
-            referrer_id = users_db[target_user_id].get('referrer')
+            referrer_id = buyer.get('referrer')
             if referrer_id and referrer_id in users_db:
+                referrer = users_db[referrer_id]
                 bonus_amount = num_tickets * REFERRAL_BONUS
-                users_db[referrer_id]['balance'] += bonus_amount
+                referrer['balance'] += bonus_amount
                 
+                # 1. ለጋባዡ መልዕክት መላክ
                 try:
                     await context.bot.send_message(
                         chat_id=referrer_id,
-                        text=f"🎉 **እንኳን ደስ አለዎት!**\nበእርስዎ ሊንክ የገባ ሰው {num_tickets} ቲኬት ስለቆረጠ **{bonus_amount} ETB** ቦነስ ወደ ሂሳብዎ ገብቷል!",
+                        text=(
+                            f"🎉 **እንኳን ደስ አለዎት!**\n\n"
+                            f"በእርስዎ ሊንክ የገባው **{buyer['full_name']}** ({num_tickets} ቲኬት) ስለቆረጠ "
+                            f"**{bonus_amount} ETB** ቦነስ ኮሚሽን ወደ ሂሳብዎ ገብቷል!"
+                        ),
                         parse_mode="Markdown"
                     )
                 except Exception as e:
                     logging.warning(f"Failed to notify referrer: {e}")
 
+                # 2. ለአድሚኑ (ለእርስዎ) ማስታወቂያ መላክ
+                try:
+                    admin_ref_notice = (
+                        f"🔔 **የሪፈራል ኮሚሽን ማስታወቂያ!**\n\n"
+                        f"👤 ገዢ፦ {buyer['full_name']} (@{buyer['username']})\n"
+                        f"🎟️ የተቆረጠ ቲኬት፦ {num_tickets}\n\n"
+                        f"👥 ጋባዥ፦ {referrer['full_name']} (@{referrer['username']})\n"
+                        f"💰 ያገኘው ኮሚሽን፦ {bonus_amount} ETB"
+                    )
+                    await context.bot.send_message(chat_id=ADMIN_ID, text=admin_ref_notice, parse_mode="Markdown")
+                except Exception as e:
+                    logging.warning(f"Failed to send admin notification: {e}")
+
+            # ለቲኬት ገዢው ማረጋገጫ መላክ
             try:
                 await context.bot.send_message(
                     chat_id=target_user_id,
-                    text=f"🎉 **ክፍያዎ ጸድቋል!**\n{num_tickets} ቲኬትዎ በስኬት ተቆርጧል። መልካም እድል!",
+                    text=(
+                        f"🎉 **ክፍያዎ ጸድቋል!**\n\n"
+                        f"**{num_tickets}** ቲኬትዎ በስኬት ተቆርጧል። መልካም እድል!\n"
+                        f"አሁን የራስዎን የሪፈራል ሊንክ ከዋናው ማውጫ ላይ በመውሰድ ሰዎችን መጋበዝ ይችላሉ!"
+                    ),
                     parse_mode="Markdown"
                 )
             except Exception as e:
                 logging.warning(f"Failed to notify buyer: {e}")
                 
-            await update.message.reply_text(f"✅ ለተጠቃሚ {target_user_id} {num_tickets} ቲኬቱ ጸድቋል።")
+            await update.message.reply_text(f"✅ ለተጠቃሚ {target_user_id} ({buyer['full_name']}) {num_tickets} ቲኬት ጸድቋል።")
         else:
             await update.message.reply_text(f"❌ ተጠቃሚ {target_user_id} በዳታቤዝ ውስጥ አልተገኘም።")
             
