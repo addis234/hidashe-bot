@@ -18,6 +18,24 @@ from telegram.ext import (
     filters
 )
 
+# -------------------------------------------------------------
+# 0. TESSERACT PATH CONFIGURATION (ለሁሉም ኦፕሬቲንግ ሲስተም)
+# -------------------------------------------------------------
+def configure_tesseract():
+    """Tesseract በየትኛው ኦፕሬቲንግ ሲስተም ላይ እንደተጫነ አውቶማቲክ የሚለይበት መንገድ"""
+    if os.name == 'nt':  # በ Windows ላይ ከሆነ
+        win_path = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
+        if os.path.exists(win_path):
+            pytesseract.pytesseract.tesseract_cmd = win_path
+    else:  # በ Linux / Docker / Render ላይ ከሆነ
+        linux_paths = ['/usr/bin/tesseract', '/usr/local/bin/tesseract']
+        for path in linux_paths:
+            if os.path.exists(path):
+                pytesseract.pytesseract.tesseract_cmd = path
+                break
+
+configure_tesseract()
+
 # Enable logging
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -345,17 +363,18 @@ async def handle_receipt(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # ተጠቃሚው ፎቶ ከላከ OCR በመጠቀም ጽሁፉን ማንበብ
     if update.message.photo:
+        file_path = f"temp_{user_id}.jpg"
         try:
             photo_file = await update.message.photo[-1].get_file()
-            file_path = f"temp_{user_id}.jpg"
             await photo_file.download_to_drive(file_path)
 
             extracted_text = pytesseract.image_to_string(Image.open(file_path))
             text_content += " " + extracted_text
-            if os.path.exists(file_path):
-                os.remove(file_path)
         except Exception as e:
             logging.error(f"OCR Error: {e}")
+        finally:
+            if os.path.exists(file_path):
+                os.remove(file_path)
 
     # ትራንዛክሽን ቁጥር መፈለግ (CBE ወይም Telebirr Txn ID)
     txn_match = re.search(r'\b(FT[A-Z0-9]{8,12}|[A-Z0-9]{10,14})\b', text_content, re.IGNORECASE)
@@ -368,14 +387,12 @@ async def handle_receipt(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         # የከፈሉትን የብር መጠን በመፈለግ የቲኬት ብዛት ማሰላት
-        # ቁጥሩን ከትራንዛክሽን ID ውጭ ካሉ የፅሁፍ ክፍሎች ብቻ መፈለግ
         clean_text_for_amount = re.sub(r'FT[A-Z0-9]{8,12}|[A-Z0-9]{10,14}', '', text_content, flags=re.IGNORECASE)
         amount_matches = re.findall(r'(?:ETB|ብር)?\s*(\d+(?:\.\d{1,2})?)', clean_text_for_amount, re.IGNORECASE)
         
         num_tickets = 1  # Default 1 ቲኬት
         if amount_matches:
             try:
-                # በጽሁፉ ውስጥ የተገኘውን የገንዘብ መጠን መውሰድ
                 possible_amounts = [float(a) for a in amount_matches if float(a) >= TICKET_PRICE]
                 if possible_amounts:
                     paid_amount = possible_amounts[0]
@@ -611,9 +628,6 @@ async def draw_lottery(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await context.bot.send_message(chat_id=ADMIN_ID, text=admin_final_report, parse_mode="Markdown")
 
-    # -------------------------------------------------------------
-    # እጣው ከተጠናቀቀ በኋላ የሁሉንም ተጠቃሚዎች ቲኬቶች ወደ 0 የመመለስ ሂደት (RESET)
-    # -------------------------------------------------------------
     for u_id in users_db:
         users_db[u_id]['tickets'] = 0
         users_db[u_id]['ticket_numbers'] = []
