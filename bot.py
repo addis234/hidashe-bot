@@ -15,19 +15,19 @@ from telegram.ext import (
     CallbackQueryHandler,
     MessageHandler,
     ContextTypes,
+    ConversationHandler,
     filters
 )
 
 # -------------------------------------------------------------
-# 0. TESSERACT PATH CONFIGURATION (ለሁሉም ኦፕሬቲንግ ሲስተም)
+# 0. TESSERACT PATH CONFIGURATION
 # -------------------------------------------------------------
 def configure_tesseract():
-    """Tesseract በየትኛው ኦፕሬቲንግ ሲስተም ላይ እንደተጫነ አውቶማቲክ የሚለይበት መንገድ"""
-    if os.name == 'nt':  # በ Windows ላይ ከሆነ
+    if os.name == 'nt':
         win_path = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
         if os.path.exists(win_path):
             pytesseract.pytesseract.tesseract_cmd = win_path
-    else:  # በ Linux / Docker / Render ላይ ከሆነ
+    else:
         linux_paths = ['/usr/bin/tesseract', '/usr/local/bin/tesseract']
         for path in linux_paths:
             if os.path.exists(path):
@@ -36,11 +36,15 @@ def configure_tesseract():
 
 configure_tesseract()
 
-# Enable logging
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
+
+# -------------------------------------------------------------
+# STATES FOR CONVERSATION
+# -------------------------------------------------------------
+SELECT_METHOD, ENTER_AMOUNT, ENTER_PIN_OR_TXN = range(3)
 
 # -------------------------------------------------------------
 # 1. RENDER HEALTH CHECK SERVER
@@ -156,7 +160,7 @@ def process_ticket_issuance(user_id: int, num_tickets: int):
 
 def get_main_menu_keyboard():
     keyboard = [
-        [InlineKeyboardButton("🎟️ ቲኬት ቁረጥ", callback_data="buy_ticket")],
+        [InlineKeyboardButton("🎟️ ቲኬት ቁረጥ (በክፍያ ሊንክ)", callback_data="buy_ticket_flow")],
         [InlineKeyboardButton("🎁 የሽልማት ዝርዝር", callback_data="show_prizes")],
         [InlineKeyboardButton("👥 የሪፈራል ሊንክ", callback_data="get_referral")],
         [InlineKeyboardButton("💰 የኔ ሂሳብ (Balance)", callback_data="my_balance")]
@@ -171,8 +175,16 @@ def get_phone_keyboard():
     keyboard = [[KeyboardButton("📱 ስልክ ቁጥሬን ላክ", request_contact=True)]]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=True)
 
+def get_payment_method_keyboard():
+    keyboard = [
+        [InlineKeyboardButton("🏦 CBE Birr / Commercial Bank", callback_data="pay_cbe")],
+        [InlineKeyboardButton("📲 Telebirr", callback_data="pay_telebirr")],
+        [InlineKeyboardButton("❌ ሰርዝ", callback_data="cancel_payment")]
+    ]
+    return InlineKeyboardMarkup(keyboard)
+
 # -------------------------------------------------------------
-# 4. BOT HANDLERS
+# 4. BOT HANDLERS & PAYMENT FLOW
 # -------------------------------------------------------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
@@ -206,6 +218,113 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     if update.message:
         await update.message.reply_text(welcome_text, parse_mode="Markdown", reply_markup=get_main_menu_keyboard())
+    return ConversationHandler.END
+
+async def start_payment_flow(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    user_id = query.from_user.id
+
+    if not users_db.get(user_id, {}).get('phone'):
+        phone_prompt = (
+            f"⚠️ **ስልክ ቁጥር ያስፈልጋል!**\n\n"
+            f"ቲኬት ለመቁረጥ እና በእጣው ወቅት አሸናፊ ሲሆኑ እንድናገኝዎ እባክዎን ከታች ያለውን **'📱 ስልክ ቁጥሬን ላክ'** የሚለውን ቁልፍ በመጫን ስልክ ቁጥርዎን ያጋሩ።"
+        )
+        await query.message.reply_text(phone_prompt, parse_mode="Markdown", reply_markup=get_phone_keyboard())
+        return ConversationHandler.END
+
+    msg = (
+        f"💳 **የክፍያ አማራጭ ይምረጡ፦**\n\n"
+        f"እባክዎን ክፍያ መፈጸም የሚፈልጉበትን የባንክ/የክፍያ መንገድ ይምረጡ፦"
+    )
+    await query.edit_message_text(msg, parse_mode="Markdown", reply_markup=get_payment_method_keyboard())
+    return SELECT_METHOD
+
+async def method_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    method = query.data
+
+    if method == "cancel_payment":
+        await query.edit_message_text("❌ የክፍያ ሂደቱ ተሰርዟል።", reply_markup=get_back_keyboard())
+        return ConversationHandler.END
+
+    context.user_data['payment_method'] = "CBE" if method == "pay_cbe" else "Telebirr"
+    acc_info = CBE_ACCOUNT if method == "pay_cbe" else TELEBIRR_NUMBER
+
+    msg = (
+        f"📌 **የተመረጠው የክፍያ መንገድ፦ {context.user_data['payment_method']}**\n"
+        f"የሂሳብ ቁጥር/ስልክ፦ `{acc_info}`\n\n"
+        f"💵 **እባክዎን መክፈል የሚፈልጉትን የብር መጠን ያስገቡ፦**\n"
+        f"(ማስታወሻ፦ የ1 ቲኬት ዋጋ {TICKET_PRICE} ብር ነው)"
+    )
+    await query.edit_message_text(msg, parse_mode="Markdown")
+    return ENTER_AMOUNT
+
+async def amount_entered(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text
+    if not text.isdigit() or int(text) < TICKET_PRICE:
+        await update.message.reply_text(f"⚠️ እባክዎን ትክክለኛ የብር መጠን ያስገቡ (ከ {TICKET_PRICE} ብር ወይም ከዚያ በላይ)፦")
+        return ENTER_AMOUNT
+
+    amount = int(text)
+    num_tickets = amount // TICKET_PRICE
+    context.user_data['amount'] = amount
+    context.user_data['num_tickets'] = num_tickets
+
+    acc_info = CBE_ACCOUNT if context.user_data['payment_method'] == "CBE" else TELEBIRR_NUMBER
+
+    msg = (
+        f"💰 **የከፈሉት መጠን፦ {amount} ETB** ({num_tickets} ቲኬት)\n\n"
+        f"እባክዎን ክፍያውን ወደዚህ ሂሳብ ይላኩ፦ `{acc_info}`\n\n"
+        f"🔐 **ክፍያውን ከፈጸሙ በኋላ የወጣውን የትራንዛክሽን ቁጥር (Txn ID) ወይም የማረጋገጫ ኮድ እዚህ ያስገቡ፦**"
+    )
+    await update.message.reply_text(msg, parse_mode="Markdown")
+    return ENTER_PIN_OR_TXN
+
+async def pin_or_txn_entered(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    txn_id = update.message.text.strip().upper()
+    num_tickets = context.user_data.get('num_tickets', 1)
+
+    if txn_id in used_transactions:
+        await update.message.reply_text("⚠️ **ይህ የትራንዛክሽን ቁጥር ቀደም ሲል ጥቅም ላይ ውሏል!**\nእባክዎን ትክክለኛ የትራንዛክሽን ቁጥር ያስገቡ።")
+        return ENTER_PIN_OR_TXN
+
+    used_transactions.add(txn_id)
+    save_used_txns()
+
+    new_tickets, ref_id, ref_bonus = process_ticket_issuance(user_id, num_tickets)
+    formatted_tickets = ", ".join([f"`{tn}`" for tn in new_tickets])
+
+    success_msg = (
+        f"✅ **ክፍያው በስኬት ተጠናቋል!**\n\n"
+        f"🔖 **የትራንዛክሽን ቁጥር፦** `{txn_id}`\n"
+        f"🎟️ **የተሰጠዎት የቲኬት ቁጥር፦** {formatted_tickets}\n\n"
+        f"🎉 **መልካም እድል!**\n"
+        f"የራስዎን የሪፈራል ሊንክ በመውሰድ ሰዎችን መጋበዝ ይችላሉ!"
+    )
+    await update.message.reply_text(success_msg, parse_mode="Markdown", reply_markup=get_back_keyboard())
+
+    if ref_id and ref_bonus > 0:
+        try:
+            await context.bot.send_message(
+                chat_id=ref_id,
+                text=(
+                    f"🎉 **እንኳን ደስ አለዎት!**\n\n"
+                    f"በእርስዎ ሊንክ የገባ ተጠቃሚ ({num_tickets} ቲኬት) ስለቆረጠ "
+                    f"**{ref_bonus} ETB** ቦነስ ኮሚሽን ወደ ሂሳብዎ ገብቷል!"
+                ),
+                parse_mode="Markdown"
+            )
+        except Exception as e:
+            logging.warning(f"Failed to notify referrer: {e}")
+
+    return ConversationHandler.END
+
+async def cancel_flow(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("❌ የክፍያ ሂደቱ ተሰርዟል።", reply_markup=get_back_keyboard())
+    return ConversationHandler.END
 
 async def handle_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
@@ -228,438 +347,133 @@ async def handle_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
             users_db[user_id]['phone'] = phone_number
         save_db()
 
-        await update.message.reply_text("✅ ስልክ ቁጥርዎ በስኬት ተመዝግቧል!", reply_markup=ReplyKeyboardRemove())
-        
-        msg = (
-            f"🎟️ **ቲኬት ለመቁረጥ፦**\n\n"
-            f"የአንድ ቲኬት ዋጋ **{TICKET_PRICE} ብር** ሲሆን የፈለጉትን ያህል ብዛት መቁረጥ ይችላሉ።\n\n"
-            f"እባክዎን ጠቅላላ ክፍያውን ከታች ባሉት የክፍያ አማራጮች ይላኩ፦\n\n"
-            f"▫️ **በCBE (የኢትዮጵያ ንግድ ባንክ)፦**\n"
-            f"`{CBE_ACCOUNT}`\n\n"
-            f"▫️ **በቴሌብር (Telebirr)፦**\n"
-            f"`{TELEBIRR_NUMBER}`\n\n"
-            f"⚡ **ማረጋገጫ፦**\n"
-            f"ክፍያ ሲፈጽሙ የሚመጣውን የትራንዛክሽን SMS መልእክት ኮፒ አድርገው እዚህ ይላኩ ወይም የስክሪንሹት ፎቶ (Screenshot) ይላኩ።"
-        )
-        await update.message.reply_text(msg, parse_mode="Markdown", reply_markup=get_back_keyboard())
+        await update.message.reply_text("✅ ስልክ ቁጥርዎ በስኬት ተመዝግቧል! አሁን '🎟️ ቲኬት ቁረጥ' የሚለውን በመጫን መቀጠል ይችላሉ።", reply_markup=get_main_menu_keyboard())
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     user_id = query.from_user.id
 
-    if user_id not in users_db:
-        users_db[user_id] = {
-            'tickets': 0, 
-            'balance': 0, 
-            'referrer': None,
-            'username': query.from_user.username or "",
-            'full_name': query.from_user.full_name or "",
-            'phone': None,
-            'ticket_numbers': []
-        }
-        save_db()
+    if query.data == "show_prizes":
+        prizes_text = "🏆 **የህዳሴ ሎተሪ 10 የሽልማት እጣዎች፦**\n\n"
+        for prize in PRIZES:
+            prizes_text += f"{prize}\n"
+        await query.edit_message_text(prizes_text, parse_mode="Markdown", reply_markup=get_back_keyboard())
 
-    try:
-        if query.data == "buy_ticket":
-            if not users_db[user_id].get('phone'):
-                phone_prompt = (
-                    f"⚠️ **ስልክ ቁጥር ያስፈልጋል!**\n\n"
-                    f"ቲኬት ለመቁረጥ እና በእጣው ወቅት አሸናፊ ሲሆኑ እንድናገኝዎ እባክዎን ከታች ያለውን **'📱 ስልክ ቁጥሬን ላክ'** የሚለውን ቁልፍ በመጫን ስልክ ቁጥርዎን ያጋሩ።"
-                )
-                await query.message.reply_text(phone_prompt, parse_mode="Markdown", reply_markup=get_phone_keyboard())
-                return
-
+    elif query.data == "get_referral":
+        user_data = users_db.get(user_id, {'tickets': 0})
+        if user_data.get('tickets', 0) < 1:
             msg = (
-                f"🎟️ **ቲኬት ለመቁረጥ፦**\n\n"
-                f"የአንድ ቲኬት ዋጋ **{TICKET_PRICE} ብር** ሲሆን የፈለጉትን ያህል ብዛት መቁረጥ ይችላሉ።\n\n"
-                f"እባክዎን ጠቅላላ ክፍያውን ከታች ባሉት የክፍያ አማራጮች ይላኩ፦\n\n"
-                f"▫️ **በCBE (የኢትዮጵያ ንግድ ባንክ)፦**\n"
-                f"`{CBE_ACCOUNT}`\n\n"
-                f"▫️ **በቴሌብር (Telebirr)፦**\n"
-                f"`{TELEBIRR_NUMBER}`\n\n"
-                f"⚡ **ማረጋገጫ፦**\n"
-                f"ክፍያ እንደፈጸሙ የሚመጣውን የትራንዛክሽን SMS መልእክት ኮፒ አድርገው እዚህ ይላኩ ወይም የስክሪንሹት ፎቶ (Screenshot) ይላኩ።"
+                f"❌ **የሪፈራል ሊንክ ማግኘት አልተቻለም!**\n\n"
+                f"የሪፈራል ሊንክ ለማግኘትና ሰዎችን በመጋበዝ ኮሚሽን ለማግኘት **ቢያንስ 1 ቲኬት** መቁረጥ ይኖርብዎታል።\n\n"
+                f"እባክዎን መጀመሪያ ቲኬት ይቁረጡ!"
             )
-            await query.edit_message_text(msg, parse_mode="Markdown", reply_markup=get_back_keyboard())
-
-        elif query.data == "show_prizes":
-            prizes_text = "🏆 **የህዳሴ ሎተሪ 10 የሽልማት እጣዎች፦**\n\n"
-            for prize in PRIZES:
-                prizes_text += f"{prize}\n"
-            await query.edit_message_text(prizes_text, parse_mode="Markdown", reply_markup=get_back_keyboard())
-
-        elif query.data == "get_referral":
-            user_data = users_db.get(user_id, {'tickets': 0})
-            if user_data.get('tickets', 0) < 1:
-                msg = (
-                    f"❌ **የሪፈራል ሊንክ ማግኘት አልተቻለም!**\n\n"
-                    f"የሪፈራል ሊንክ ለማግኘትና ሰዎችን በመጋበዝ ኮሚሽን ለማግኘት **ቢያንስ 1 ቲኬት** መቁረጥ ይኖርብዎታል።\n\n"
-                    f"እባክዎን መጀመሪያ ቲኬት ይቁረጡ!"
-                )
-            else:
-                bot_username = context.bot.username
-                ref_link = f"https://t.me/{bot_username}?start={user_id}"
-                msg = (
-                    f"🔗 **የእርስዎ የሪፈራል ሊንክ፦**\n`{ref_link}`\n\n"
-                    f"ይህንን ሊንክ ለወዳጅ ዘመድዎ ያጋሩ! በእርስዎ ሊንክ ገብተው ሰዎች በሚቆርጡት እያንዳንዱ ቲኬት **{REFERRAL_BONUS} ብር** ኮሚሽን ያገኛሉ።"
-                )
-            await query.edit_message_text(msg, parse_mode="Markdown", reply_markup=get_back_keyboard())
-
-        elif query.data == "my_balance":
-            user_data = users_db.get(user_id, {'tickets': 0, 'balance': 0, 'ticket_numbers': []})
-            tickets_list = ", ".join(user_data.get('ticket_numbers', [])) if user_data.get('ticket_numbers') else "ምንም የለም"
+        else:
+            bot_username = context.bot.username
+            ref_link = f"https://t.me/{bot_username}?start={user_id}"
             msg = (
-                f"📊 **የእርስዎ መረጃ፦**\n\n"
-                f"🎟️ የቆረጡት ቲኬት ብዛት፦ **{user_data['tickets']}**\n"
-                f"🔢 የትኬት ቁጥሮችዎ፦ `{tickets_list}`\n"
-                f"💰 ከሪፈራል ያገኙት ቦነስ፦ **{user_data['balance']} ETB**"
+                f"🔗 **የእርስዎ የሪፈራል ሊንክ፦**\n`{ref_link}`\n\n"
+                f"ይህንን ሊንክ ለወዳጅ ዘመድዎ ያጋሩ! በእርስዎ ሊንክ ገብተው ሰዎች በሚቆርጡት እያንዳንዱ ቲኬት **{REFERRAL_BONUS} ብር** ኮሚሽን ያገኛሉ።"
             )
-            await query.edit_message_text(msg, parse_mode="Markdown", reply_markup=get_back_keyboard())
+        await query.edit_message_text(msg, parse_mode="Markdown", reply_markup=get_back_keyboard())
 
-        elif query.data == "main_menu":
-            welcome_text = (
-                f"እንኳን ወደ **ህዳሴ ሎተሪ** በደህና መጡ! 🎟️\n\n"
-                f"የአንድ ቲኬት ዋጋ፦ **{TICKET_PRICE} ብር**\n"
-                f"የፈለጉትን ያህል ቲኬት መግዛት ይችላሉ!\n\n"
-                f"💡 **ማስታወሻ፦** ቲኬት ሲቆርጡ የራስዎ የሪፈራል ሊንክ ይፈጠርልዎታል። "
-                f"በእርስዎ ሊንክ ገብተው ሰዎች ቲኬት ሲቆርጡ ለእያንዳንዱ ቲኬት **{REFERRAL_BONUS} ብር** ኮሚሽን ያገኛሉ!\n\n"
-                f"እባክዎን ከታች ካሉት አማራጮች አንዱን ይምረጡ፦"
-            )
-            await query.edit_message_text(welcome_text, parse_mode="Markdown", reply_markup=get_main_menu_keyboard())
+    elif query.data == "my_balance":
+        user_data = users_db.get(user_id, {'tickets': 0, 'balance': 0, 'ticket_numbers': []})
+        tickets_list = ", ".join(user_data.get('ticket_numbers', [])) if user_data.get('ticket_numbers') else "ምንም የለም"
+        msg = (
+            f"📊 **የእርስዎ መረጃ፦**\n\n"
+            f"🎟️ የቆረጡት ቲኬት ብዛት፦ **{user_data['tickets']}**\n"
+            f"🔢 የትኬት ቁጥሮችዎ፦ `{tickets_list}`\n"
+            f"💰 ከሪፈራል ያገኙት ቦነስ፦ **{user_data['balance']} ETB**"
+        )
+        await query.edit_message_text(msg, parse_mode="Markdown", reply_markup=get_back_keyboard())
 
-    except Exception as e:
-        logging.error(f"Error handling button click: {e}")
+    elif query.data == "main_menu":
+        welcome_text = (
+            f"እንኳን ወደ **ህዳሴ ሎተሪ** በደህና መጡ! 🎟️\n\n"
+            f"የአንድ ቲኬት ዋጋ፦ **{TICKET_PRICE} ብር**\n"
+            f"የፈለጉትን ያህል ቲኬት መግዛት ይችላሉ!\n\n"
+            f"እባክዎን ከታች ካሉት አማራጮች አንዱን ይምረጡ፦"
+        )
+        await query.edit_message_text(welcome_text, parse_mode="Markdown", reply_markup=get_main_menu_keyboard())
 
 # -------------------------------------------------------------
-# 5. RECEIPT & PAYMENT VERIFICATION
+# 5. ADMIN HANDLERS (/approve, /stats, /draw)
 # -------------------------------------------------------------
-async def handle_receipt(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    user_id = user.id
-    
-    if user_id not in users_db:
-        users_db[user_id] = {
-            'tickets': 0, 
-            'balance': 0, 
-            'referrer': None,
-            'username': user.username or "",
-            'full_name': user.full_name or "",
-            'phone': None,
-            'ticket_numbers': []
-        }
-        save_db()
-
-    if not users_db[user_id].get('phone'):
-        phone_prompt = (
-            f"⚠️ **ስልክ ቁጥር አልተመዘገበም!**\n\n"
-            f"የከፈሉትን ክፍያ ለማረጋገጥ እና ቲኬትዎን ለመስጠት መጀመሪያ ስልክ ቁጥርዎን መላክ አለብዎት።\n"
-            f"እባክዎን ከታች ያለውን **'📱 ስልክ ቁጥሬን ላክ'** የሚለውን ቁልፍ ተጫነው ስልክዎን ያጋሩ።"
-        )
-        await update.message.reply_text(phone_prompt, parse_mode="Markdown", reply_markup=get_phone_keyboard())
-        return
-
-    text_content = update.message.text or update.message.caption or ""
-
-    # ተጠቃሚው ፎቶ ከላከ OCR በመጠቀም ጽሁፉን ማንበብ
-    if update.message.photo:
-        file_path = f"temp_{user_id}.jpg"
-        try:
-            photo_file = await update.message.photo[-1].get_file()
-            await photo_file.download_to_drive(file_path)
-
-            extracted_text = pytesseract.image_to_string(Image.open(file_path))
-            text_content += " " + extracted_text
-        except Exception as e:
-            logging.error(f"OCR Error: {e}")
-        finally:
-            if os.path.exists(file_path):
-                os.remove(file_path)
-
-    # ትራንዛክሽን ቁጥር መፈለግ (CBE ወይም Telebirr Txn ID)
-    txn_match = re.search(r'\b(FT[A-Z0-9]{8,12}|[A-Z0-9]{10,14})\b', text_content, re.IGNORECASE)
-
-    if txn_match:
-        txn_id = txn_match.group(1).upper()
-
-        if txn_id in used_transactions:
-            await update.message.reply_text("⚠️ **ይህ የትራንዛክሽን ቁጥር ቀደም ሲል ጥቅም ላይ ውሏል!**\nእባክዎን አዲስ ክፍያ በመፈጸም ትክክለኛ ደረሰኝ ያስገቡ።", parse_mode="Markdown")
-            return
-
-        # የከፈሉትን የብር መጠን በመፈለግ የቲኬት ብዛት ማሰላት
-        clean_text_for_amount = re.sub(r'FT[A-Z0-9]{8,12}|[A-Z0-9]{10,14}', '', text_content, flags=re.IGNORECASE)
-        amount_matches = re.findall(r'(?:ETB|ብር)?\s*(\d+(?:\.\d{1,2})?)', clean_text_for_amount, re.IGNORECASE)
-        
-        num_tickets = 1  # Default 1 ቲኬት
-        if amount_matches:
-            try:
-                possible_amounts = [float(a) for a in amount_matches if float(a) >= TICKET_PRICE]
-                if possible_amounts:
-                    paid_amount = possible_amounts[0]
-                    calculated = int(paid_amount // TICKET_PRICE)
-                    if calculated >= 1:
-                        num_tickets = calculated
-            except ValueError:
-                num_tickets = 1
-
-        used_transactions.add(txn_id)
-        save_used_txns()
-
-        new_tickets, ref_id, ref_bonus = process_ticket_issuance(user_id, num_tickets)
-        formatted_tickets = ", ".join([f"`{tn}`" for tn in new_tickets])
-
-        success_msg = (
-            f"🎉 **ክፍያዎ በስኬት ተረጋግጧል!**\n\n"
-            f"🔖 **Txn ID:** `{txn_id}`\n"
-            f"🎟️ **የተቆረጠ ቲኬት ብዛት፦** {num_tickets}\n"
-            f"🔢 **የትኬት ቁጥሮችዎ፦** {formatted_tickets}\n\n"
-            f"መልካም እድል! የራስዎን የሪፈራል ሊንክ በመውሰድ ሰዎችን መጋበዝ ይችላሉ!"
-        )
-        await update.message.reply_text(success_msg, parse_mode="Markdown")
-
-        if ref_id and ref_bonus > 0:
-            try:
-                await context.bot.send_message(
-                    chat_id=ref_id,
-                    text=(
-                        f"🎉 **እንኳን ደስ አለዎት!**\n\n"
-                        f"በእርስዎ ሊንክ የገባው **{users_db[user_id]['full_name']}** ({num_tickets} ቲኬት) ስለቆረጠ "
-                        f"**{ref_bonus} ETB** ቦነስ ኮሚሽን ወደ ሂሳብዎ ገብቷል!"
-                    ),
-                    parse_mode="Markdown"
-                )
-            except Exception as e:
-                logging.warning(f"Failed to notify referrer: {e}")
-
-        admin_log = (
-            f"⚡ **አውቶማቲክ ክፍያ ተፀድቋል!**\n\n"
-            f"👤 ተጠቃሚ፦ {user.full_name} (@{user.username})\n"
-            f"🆔 ID: `{user_id}`\n"
-            f"📞 ስልክ፦ `{users_db[user_id]['phone']}`\n"
-            f"🔖 Txn ID: `{txn_id}`\n"
-            f"🎟️ የተቆረጡ ቲኬቶች፦ {', '.join(new_tickets)}"
-        )
-        try:
-            await context.bot.send_message(chat_id=ADMIN_ID, text=admin_log, parse_mode="Markdown")
-        except Exception as e:
-            logging.error(f"Failed to log auto-approval to admin: {e}")
-
-    else:
-        user_phone = users_db[user_id].get('phone', 'አልተመዘገበም')
-        admin_msg = (
-            f"📥 **አዲስ የቲኬት ክፍያ ደረሰኝ/መልእክት ደርሷል!**\n\n"
-            f"👤 ላኪ፦ {user.full_name} (@{user.username})\n"
-            f"🆔 ID: `{user_id}`\n"
-            f"📞 ስልክ፦ `{user_phone}`\n\n"
-            f"እባክዎን ካረጋገጡ በኋላ ያፅድቁ፦\n"
-            f"1. `/approve {user_id}` (ለ 1 ቲኬት)\n"
-            f"2. `/approve {user_id} <ብዛት>`"
-        )
-        try:
-            await context.bot.send_message(chat_id=ADMIN_ID, text=admin_msg, parse_mode="Markdown")
-            if update.message.photo or update.message.document:
-                await context.bot.forward_message(chat_id=ADMIN_ID, from_chat_id=user_id, message_id=update.message.message_id)
-            elif update.message.text:
-                await context.bot.send_message(chat_id=ADMIN_ID, text=f"💬 የተላከ የጽሁፍ መልዕክት፦\n`{update.message.text}`", parse_mode="Markdown")
-            
-            await update.message.reply_text("✅ ደረሰኝዎ ደርሶናል! አድሚኑ ደረሰኙን አይቶ በጥቂት ደቂቃዎች ውስጥ ያፀድቅልዎታል።")
-        except Exception as e:
-            logging.error(f"Error forwarding receipt to admin: {e}")
-
 async def approve_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
 
     try:
         target_user_id = int(context.args[0])
-        num_tickets = 1
-        if len(context.args) > 1 and context.args[1].isdigit():
-            num_tickets = int(context.args[1])
+        num_tickets = int(context.args[1]) if len(context.args) > 1 and context.args[1].isdigit() else 1
 
         if target_user_id in users_db:
             new_ticket_numbers, ref_id, bonus_amount = process_ticket_issuance(target_user_id, num_tickets)
             buyer = users_db[target_user_id]
 
-            if ref_id and bonus_amount > 0:
-                try:
-                    await context.bot.send_message(
-                        chat_id=ref_id,
-                        text=(
-                            f"🎉 **እንኳን ደስ አለዎት!**\n\n"
-                            f"በእርስዎ ሊንክ የገባው **{buyer['full_name']}** ({num_tickets} ቲኬት) ስለቆረጠ "
-                            f"**{bonus_amount} ETB** ቦነስ ኮሚሽን ወደ ሂሳብዎ ገብቷል!"
-                        ),
-                        parse_mode="Markdown"
-                    )
-                except Exception as e:
-                    logging.warning(f"Failed to notify referrer: {e}")
-
             formatted_tickets = ", ".join([f"`{tn}`" for tn in new_ticket_numbers])
-            try:
-                await context.bot.send_message(
-                    chat_id=target_user_id,
-                    text=(
-                        f"🎉 **ክፍያዎ ጸድቋል!**\n\n"
-                        f"**{num_tickets}** ቲኬትዎ በስኬት ተቆርጧል።\n"
-                        f"🎟️ **የእርስዎ የትኬት ቁጥሮች፦** {formatted_tickets}\n\n"
-                        f"መልካም እድል! አሁን የራስዎን የሪፈራል ሊንክ ከዋናው ማውጫ ላይ በመውሰድ ሰዎችን መጋበዝ ይችላሉ!"
-                    ),
-                    parse_mode="Markdown"
-                )
-            except Exception as e:
-                logging.warning(f"Failed to notify buyer: {e}")
-                
-            overall_tickets = sum(len(u.get('ticket_numbers', [])) for u in users_db.values())
-            await update.message.reply_text(
-                f"✅ ለተጠቃሚ {target_user_id} ({buyer['full_name']}) {num_tickets} ቲኬት ጸድቋል።\n"
-                f"የትኬት ቁጥሮች፦ {', '.join(new_ticket_numbers)}\n\n"
-                f"📊 **አጠቃላይ እስካሁን የተሸጡ ቲኬቶች፦ {overall_tickets}**"
+            await context.bot.send_message(
+                chat_id=target_user_id,
+                text=f"🎉 **ክፍያዎ ጸድቋል!**\n🎟️ **የትኬት ቁጥሮችዎ፦** {formatted_tickets}\n\nመልካም እድል!",
+                parse_mode="Markdown"
             )
-        else:
-            await update.message.reply_text(f"❌ ተጠቃሚ {target_user_id} በዳታቤዝ ውስጥ አልተገኘም።")
-            
+            await update.message.reply_text(f"✅ ለተጠቃሚ {target_user_id} {num_tickets} ቲኬት ጸድቋል።")
     except Exception as e:
-        await update.message.reply_text("❌ እባክዎን በትክክለኛው ፎርማት ያስገቡ፦ `/approve <USER_ID> <ብዛት>`", parse_mode="Markdown")
+        await update.message.reply_text("❌ አጠቃቀም፦ `/approve <USER_ID> <ብዛት>`")
 
-# -------------------------------------------------------------
-# 6. ADMIN STATS HANDLER (/stats)
-# -------------------------------------------------------------
 async def show_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
-
     total_users = len(users_db)
     total_tickets = sum(len(u.get('ticket_numbers', [])) for u in users_db.values())
-    total_revenue = total_tickets * TICKET_PRICE
+    await update.message.reply_text(f"📊 አጠቃላይ ተጠቃሚ፦ {total_users}\n🎟️ የተሸጡ ቲኬቶች፦ {total_tickets}")
 
-    stats_msg = (
-        f"📊 **የህዳሴ ሎተሪ አጠቃላይ ስታቲስቲክስ፦**\n\n"
-        f"👥 አጠቃላይ የተመዘገቡ ተጠቃሚዎች፦ **{total_users}**\n"
-        f"🎟️ አጠቃላይ የተሸጡ (የተቆረጡ) ቲኬቶች፦ **{total_tickets}**\n"
-        f"💰 አጠቃላይ የተሰበሰበ ገቢ፦ **{total_revenue:,} ETB**"
-    )
-    await update.message.reply_text(stats_msg, parse_mode="Markdown")
-
-# -------------------------------------------------------------
-# 7. LIVE LOTTERY DRAW HANDLER (/draw) & RESET TICKETS
-# -------------------------------------------------------------
 async def draw_lottery(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
-
-    all_tickets = []
-    for uid, udata in users_db.items():
-        for t_num in udata.get('ticket_numbers', []):
-            all_tickets.append((t_num, uid))
-
+    all_tickets = [(t, uid) for uid, u in users_db.items() for t in u.get('ticket_numbers', [])]
     if len(all_tickets) < 10:
-        await update.message.reply_text(f"⚠️ እጣ ለማውጣት ቢያንስ 10 ቲኬቶች መቆረጥ አለባቸው። በአሁኑ ወቅት የተሸጡት ቲኬቶች ብዛት፦ {len(all_tickets)}")
+        await update.message.reply_text("⚠️ እጣ ለማውጣት ቢያንስ 10 ቲኬቶች ያስፈልጋሉ።")
         return
-
-    status_msg = await update.message.reply_text("🎲 **የህዳሴ ሎተሪ እጣ የማውጣት ሂደት ሊጀምር ነው!**\n\n⏳ 3...")
-    await asyncio.sleep(1)
-    await status_msg.edit_text("🎲 **የህዳሴ ሎተሪ እጣ የማውጣት ሂደት ሊጀምር ነው!**\n\n⏳ 2...")
-    await asyncio.sleep(1)
-    await status_msg.edit_text("🎲 **የህዳሴ ሎተሪ እጣ የማውጣት ሂደት ሊጀምር ነው!**\n\n⏳ 1...")
-    await asyncio.sleep(1)
-
+    
     winning_tickets = random.sample(all_tickets, 10)
-    
-    if PUBLIC_CHANNEL:
-        try:
-            await context.bot.send_message(
-                chat_id=PUBLIC_CHANNEL,
-                text="🎉 **የህዳሴ ሎተሪ የቀጥታ የዕጣ ማውጣት ስርጭት ተጀምሯል!**\n\nመልካም እድል ለሁላችሁም! 🤞",
-                parse_mode="Markdown"
-            )
-        except Exception as e:
-            logging.error(f"Failed to send to public channel: {e}")
-
-    live_text = "🎉 **የህዳሴ ሎተሪ አሸናፊዎች ዝርዝር፦**\n\n"
-    await status_msg.edit_text(live_text + "🔄 *የመጀመሪያው እጣ እየወጣ ነው...*", parse_mode="Markdown")
-
-    for rank in range(9, -1, -1):
-        await asyncio.sleep(3)
-
-        ticket_num, uid = winning_tickets[rank]
-        prize = PRIZES[rank]
-        user_info = users_db[uid]
-        full_name = user_info.get('full_name', 'አልተጠቀሰም')
-        phone = user_info.get('phone', 'አልተመዘገበም')
-        username = f"@{user_info.get('username')}" if user_info.get('username') else "የለውም"
-
-        win_entry = (
-            f"🎖️ **{prize}**\n"
-            f"🎟️ ትኬት ቁጥር፦ `{ticket_num}`\n"
-            f"👤 አሸናፊ፦ {full_name} ({username})\n"
-            f"-----------------------------------\n"
-        )
-        
-        live_text += win_entry
-        await status_msg.edit_text(live_text + ("🔄 *ቀጣዩ እጣ እየወጣ ነው...*" if rank > 0 else "✅ **የዕጣ ማውጣት ሂደቱ ተጠናቋል!**"), parse_mode="Markdown")
-
-        if PUBLIC_CHANNEL:
-            try:
-                await context.bot.send_message(
-                    chat_id=PUBLIC_CHANNEL,
-                    text=f"🔥 **አዲስ እጣ ወጣ!** 🔥\n\n{win_entry}",
-                    parse_mode="Markdown"
-                )
-            except Exception as e:
-                logging.error(f"Failed to post winner to public channel: {e}")
-
-        winner_private_msg = (
-            f"🎉🎉 **እንኳን ደስ አለዎት!** 🎉🎉\n\n"
-            f"በህዳሴ ሎተሪ እጣ አሸናፊ ሆነዋል!\n\n"
-            f"🎟️ **የአሸናፊ ትኬት ቁጥርዎ፦** `{ticket_num}`\n"
-            f"🏆 **የደረሰዎት ሽልማት፦** {prize}\n\n"
-            f"ሽልማቱን ለመረከብ አድሚኑ በስልክ ቁጥርዎ ወይም በቴሌግራም ያገኝዎታል።"
-        )
-        try:
-            await context.bot.send_message(chat_id=uid, text=winner_private_msg, parse_mode="Markdown")
-        except Exception as e:
-            logging.error(f"Failed to notify winner {uid}: {e}")
-
-    admin_final_report = live_text + "\n📞 **የአሸናፊዎች ስልክ ቁጥር ዝርዝር፦**\n"
+    report = "🎉 **የዕጣ ማውጣት አሸናፊዎች፦**\n\n"
     for rank in range(10):
-        t_num, u_id = winning_tickets[rank]
-        u_info = users_db[u_id]
-        admin_final_report += f"▫️ {PRIZES[rank]} -> {u_info.get('full_name')} (`{u_info.get('phone')}`)\n"
-
-    await context.bot.send_message(chat_id=ADMIN_ID, text=admin_final_report, parse_mode="Markdown")
-
-    for u_id in users_db:
-        users_db[u_id]['tickets'] = 0
-        users_db[u_id]['ticket_numbers'] = []
-    
-    used_transactions.clear()
-    save_db()
-    save_used_txns()
-
-    await context.bot.send_message(chat_id=ADMIN_ID, text="🔄 **የዕጣ ማውጣት ሂደቱ ስለተጠናቀቀ የሁሉም ተጠቃሚዎች ቲኬቶች ወደ 0 ተመልሰዋል። ለቀጣይ ዙር ዝግጁ ነው!**", parse_mode="Markdown")
+        t_num, uid = winning_tickets[rank]
+        report += f"{PRIZES[rank]} -> `{t_num}` ({users_db[uid].get('full_name')})\n"
+    await update.message.reply_text(report, parse_mode="Markdown")
 
 # -------------------------------------------------------------
-# 8. MAIN EXECUTION
+# 6. MAIN EXECUTION
 # -------------------------------------------------------------
 def main():
     threading.Thread(target=start_health_check_server, daemon=True).start()
 
     if not BOT_TOKEN:
-        logging.error("No BOT_TOKEN provided! Exiting...")
+        logging.error("No BOT_TOKEN provided!")
         return
 
     app = Application.builder().token(BOT_TOKEN).build()
 
+    pay_conv_handler = ConversationHandler(
+        entry_points=[CallbackQueryHandler(start_payment_flow, pattern="^buy_ticket_flow$")],
+        states={
+            SELECT_METHOD: [CallbackQueryHandler(method_selected, pattern="^(pay_cbe|pay_telebirr|cancel_payment)$")],
+            ENTER_AMOUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, amount_entered)],
+            ENTER_PIN_OR_TXN: [MessageHandler(filters.TEXT & ~filters.COMMAND, pin_or_txn_entered)]
+        },
+        fallbacks=[CommandHandler("cancel", cancel_flow)]
+    )
+
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(pay_conv_handler)
     app.add_handler(CommandHandler("approve", approve_payment))
     app.add_handler(CommandHandler("stats", show_stats))
     app.add_handler(CommandHandler("draw", draw_lottery))
     
     app.add_handler(MessageHandler(filters.CONTACT, handle_contact))
     app.add_handler(CallbackQueryHandler(button_handler))
-    
-    receipt_filter = filters.PHOTO | filters.Document.ALL | filters.TEXT
-    app.add_handler(MessageHandler(receipt_filter & ~filters.COMMAND, handle_receipt))
 
     logging.info("Starting Bot Polling...")
     app.run_polling()
