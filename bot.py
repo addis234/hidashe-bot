@@ -20,6 +20,22 @@ from telegram.ext import (
 )
 
 # -------------------------------------------------------------
+# DUMMY HTTP SERVER FOR RENDER PORT BINDING
+# -------------------------------------------------------------
+class HealthCheckHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header('Content-type', 'text/html')
+        self.end_headers()
+        self.wfile.write(b"Bot is alive and running!")
+
+def run_health_check_server():
+    port = int(os.environ.get("PORT", 10000))
+    server = HTTPServer(('0.0.0.0', port), HealthCheckHandler)
+    logging.info(f"Health check server running on port {port}")
+    server.serve_forever()
+
+# -------------------------------------------------------------
 # 0. TESSERACT CONFIGURATION
 # -------------------------------------------------------------
 def configure_tesseract():
@@ -48,7 +64,7 @@ BUY_TICKET_QTY = range(5, 6)
 TRANSFER_RECIPIENT, TRANSFER_AMOUNT = range(6, 8)
 
 # CONFIGURATIONS
-BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
+BOT_TOKEN = os.environ.get("BOT_TOKEN", "8833785126:AAEQgzZ8Wbg4t4-KDlcT1itp-E8DHbNw79M")
 ADMIN_ID = 6722504980  # የአድሚን Telegram ID
 
 TICKET_PRICE = 50           # የአንድ ቲኬት ዋጋ (ETB)
@@ -94,7 +110,7 @@ def load_db():
                     u.setdefault('tickets', 0)
                     u.setdefault('ticket_numbers', [])
                     u.setdefault('phone', None)
-                    u.setdefault('referred_count', 0)  # የጋበዛቸው ሰዎች ብዛት
+                    u.setdefault('referred_count', 0)
                 return db
         except Exception as e:
             logging.error(f"Error loading DB: {e}")
@@ -192,7 +208,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ref_id = int(context.args[0])
             if ref_id != user_id and ref_id in users_db:
                 users_db[user_id]['referrer'] = ref_id
-                # የጋባዡን ተጋባዥ ብዛት በ +1 ጨምር
                 users_db[ref_id]['referred_count'] = users_db[ref_id].get('referred_count', 0) + 1
         save_db()
 
@@ -414,7 +429,7 @@ async def process_buy_ticket(update: Update, context: ContextTypes.DEFAULT_TYPE)
     return ConversationHandler.END
 
 # -------------------------------------------------------------
-# WITHDRAWAL FLOW (አዲሱ የ 10 ሰው ሪፈራል ህግ እዚህ ጋር ተጨምሯል)
+# WITHDRAWAL FLOW
 # -------------------------------------------------------------
 async def start_withdraw(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -424,7 +439,6 @@ async def start_withdraw(update: Update, context: ContextTypes.DEFAULT_TYPE):
     balance = u.get('wallet_balance', 0)
     ref_count = u.get('referred_count', 0)
 
-    # 1. የሪፈራል ብዛት ማረጋገጫ (10 ሰው ካልጋበዘ አይፈቀድም)
     if ref_count < REQUIRED_REFERRALS:
         remaining = REQUIRED_REFERRALS - ref_count
         ref_link = f"https://t.me/{context.bot.username}?start={user_id}"
@@ -441,8 +455,7 @@ async def start_withdraw(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return ConversationHandler.END
 
-    # 2. የዋሌት ሂሳብ ማረጋገጫ (500 ETB + 10 ETB ክፍያ)
-    min_required = MIN_WITHDRAW_AMOUNT + WITHDRAW_FEE  # 510 ETB
+    min_required = MIN_WITHDRAW_AMOUNT + WITHDRAW_FEE
 
     if balance < min_required:
         await query.edit_message_text(
@@ -545,7 +558,7 @@ async def start_transfer(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if balance < (1 + TRANSFER_FEE):
         await query.edit_message_text(
-            f"❌ **ገንዘብ ማስተላለፍ አይችሉም!**\n\nበዋሌትዎ ላይ በቂ ገንዘብ የለም። (የአገልግሎት ክፍያ {TRANSFER_FEE} ETB ይቆረጣል)",
+            f"❌ **ገንዘብ ማስተላለፍ አይችሉም!**\n\nበዋሌትዎ ላይ በቂ ገንዘብ የለም። (የአገልግሎት ክፍያ {TRANSFER_FEE} ETB ይቆረጣል።)",
             reply_markup=get_back_keyboard(),
             parse_mode="Markdown"
         )
@@ -684,10 +697,23 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("እንኳን ወደ **ህዳሴ ሎተሪ** በደህና መጡ! 🎟️", parse_mode="Markdown", reply_markup=get_main_menu_keyboard(user_id))
 
 # -------------------------------------------------------------
+# ERROR HANDLER FOR BOT STABILITY
+# -------------------------------------------------------------
+async def global_error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
+    logging.error(f"Exception while handling an update: {context.error}")
+
+# -------------------------------------------------------------
 # MAIN BOT EXECUTION
 # -------------------------------------------------------------
 def main():
-    if not BOT_TOKEN: return
+    if not BOT_TOKEN:
+        logging.error("No BOT_TOKEN found!")
+        return
+
+    # Start Health Check HTTP Server on background thread for Render
+    server_thread = threading.Thread(target=run_health_check_server, daemon=True)
+    server_thread.start()
+
     app = Application.builder().token(BOT_TOKEN).build()
 
     dep_conv = ConversationHandler(
@@ -735,7 +761,11 @@ def main():
     app.add_handler(MessageHandler(filters.CONTACT, handle_contact))
     app.add_handler(CallbackQueryHandler(button_handler))
 
-    app.run_polling()
+    # Add error handler to prevent crashing on network/conflict errors
+    app.add_error_handler(global_error_handler)
+
+    # Clear pending updates on start
+    app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
     main()
