@@ -4,7 +4,10 @@ import logging
 import json
 import random
 import re
-from http.server import HTTPServer, BaseHTTPRequestHandler
+import time
+import requests
+import uvicorn
+from fastapi import FastAPI, Request
 import threading
 from PIL import Image
 import pytesseract
@@ -20,23 +23,44 @@ from telegram.ext import (
 )
 
 # -------------------------------------------------------------
-# DUMMY HTTP SERVER FOR RENDER PORT BINDING
+# CONFIGURATIONS
 # -------------------------------------------------------------
-class HealthCheckHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.send_header('Content-type', 'text/html')
-        self.end_headers()
-        self.wfile.write(b"Bot is alive and running!")
+BOT_TOKEN = os.environ.get("BOT_TOKEN", "8833785126:AAEQgzZ8Wbg4t4-KDlcT1itp-E8DHbNw79M")
+ADMIN_ID = 6722504980  # የአድሚን Telegram ID
 
-def run_health_check_server():
-    port = int(os.environ.get("PORT", 10000))
-    server = HTTPServer(('0.0.0.0', port), HealthCheckHandler)
-    logging.info(f"Health check server running on port {port}")
-    server.serve_forever()
+# 📢 የኦፊሴላዊ ቻናልህ Username (ቦቱን የቻናሉ Admin ማድረግህን አረጋግጥ!)
+CHANNEL_USERNAME = "@YourChannelUsername" 
+
+# 🏦 TELEBIRR MERCHANT API KEYS
+TELEBIRR_APP_ID = os.environ.get("TELEBIRR_APP_ID", "YOUR_APP_ID")
+TELEBIRR_APP_KEY = os.environ.get("TELEBIRR_APP_KEY", "YOUR_APP_KEY")
+TELEBIRR_SHORTCODE = os.environ.get("TELEBIRR_SHORTCODE", "YOUR_SHORTCODE")
+SERVER_DOMAIN = os.environ.get("SERVER_DOMAIN", "https://your-render-app.onrender.com")
+
+TICKET_PRICE = 50           # የአንድ ቲኬት ዋጋ (ETB)
+REFERRAL_BONUS = 10         # ለጋባዡ የሚሄድ (ETB)
+ADMIN_REFERRAL_SHARE = 40   # በሪፈራል ሲቆረጥ ለአድሚን የሚሄድ (ETB)
+
+MIN_WITHDRAW_AMOUNT = 500   # የሚወጣው አነስተኛ የብር መጠን
+WITHDRAW_FEE = 10           # የትራንስፈር አገልግሎት ክፍያ
+TRANSFER_FEE = 1            # ከዋሌት ወደ ዋሌት የትራንስፈር አገልግሎት ክፍያ
+REQUIRED_REFERRALS = 10     # ገንዘብ ለማውጣት የሚያስፈልግ አነስተኛ የሪፈራል ብዛት
+
+CBE_ACCOUNT = "1000723732108"
+TELEBIRR_NUMBER = "0914197335"
+
+# 1. የተስተካከለው የሽልማት ዝርዝር (Core i7 11th Gen Laptop ብቻ)
+PRIZES = [
+    "🏆 የሎተሪው ዋና እጣ፦ Core i7 11th Generation Laptop 💻"
+]
+
+DB_FILE = "users_db.json"
+USED_TXNS_FILE = "used_txns.json"
+
+telegram_app = None
 
 # -------------------------------------------------------------
-# 0. TESSERACT CONFIGURATION
+# TESSERACT CONFIGURATION
 # -------------------------------------------------------------
 def configure_tesseract():
     if os.name == 'nt':
@@ -62,33 +86,6 @@ DEPOSIT_METHOD, DEPOSIT_AMOUNT, DEPOSIT_PROOF = range(3)
 WITHDRAW_AMOUNT, WITHDRAW_DETAILS = range(3, 5)
 BUY_TICKET_QTY = range(5, 6)
 TRANSFER_RECIPIENT, TRANSFER_AMOUNT = range(6, 8)
-
-# CONFIGURATIONS
-BOT_TOKEN = os.environ.get("BOT_TOKEN", "8833785126:AAEQgzZ8Wbg4t4-KDlcT1itp-E8DHbNw79M")
-ADMIN_ID = 6722504980  # የአድሚን Telegram ID
-
-# 📢 ማስታወቂያ የሚለቀቅበት ቻናል Username ወይም Channel ID
-CHANNEL_ID = "@your_channel_username"  # ምሳሌ፦ "@hidashe_lottery" ወይም ID "-100123456789"
-
-TICKET_PRICE = 50           # የአንድ ቲኬት ዋጋ (ETB)
-REFERRAL_BONUS = 10         # ለጋባዡ የሚሄድ (ETB)
-ADMIN_REFERRAL_SHARE = 40   # በሪፈራል ሲቆረጥ ለአድሚን የሚሄድ (ETB)
-
-MIN_WITHDRAW_AMOUNT = 500   # የሚወጣው አነስተኛ የብር መጠን
-WITHDRAW_FEE = 10           # የትራንስፈር አገልግሎት ክፍያ
-TRANSFER_FEE = 1            # ከዋሌት ወደ ዋሌት የትራንስፈር አገልግሎት ክፍያ
-REQUIRED_REFERRALS = 10     # ገንዘብ ለማውጣት የሚያስፈልግ አነስተኛ የሪፈራል ብዛት
-
-CBE_ACCOUNT = "1000723732108"
-TELEBIRR_NUMBER = "0914197335"
-
-# የተሻሻለው የሽልማት ዝርዝር (ላፕቶፕ ብቻ)
-PRIZES = [
-    "🏆 ዋና እጣ፦ Core i7 11th Gen (16GB RAM / 512GB-1TB SSD) Laptop 💻"
-]
-
-DB_FILE = "users_db.json"
-USED_TXNS_FILE = "used_txns.json"
 
 # -------------------------------------------------------------
 # DATABASE FUNCTIONS
@@ -155,6 +152,65 @@ def ensure_admin_exists():
 ensure_admin_exists()
 
 # -------------------------------------------------------------
+# FASTAPI WEB SERVER FOR RENDER & TELEBIRR WEBHOOK
+# -------------------------------------------------------------
+web_app = FastAPI()
+
+@web_app.get("/")
+def health_check():
+    return {"status": "ok", "message": "Hidasse Lottery Bot is running!"}
+
+@web_app.post("/telebirr/webhook")
+async def telebirr_webhook(request: Request):
+    try:
+        data = await request.json()
+        logging.info(f"Telebirr Webhook Received: {data}")
+
+        if data.get("tradeStatus") == "COMPLETED" or data.get("code") == 0:
+            out_trade_no = data.get("outTradeNo", "")
+            parts = out_trade_no.split("_")
+            
+            if len(parts) >= 2 and parts[1].isdigit():
+                user_id = int(parts[1])
+                amount = float(data.get("totalAmount", 0))
+
+                if user_id in users_db:
+                    users_db[user_id]['wallet_balance'] += amount
+                    save_db()
+
+                    if telegram_app:
+                        asyncio.run_coroutine_threadsafe(
+                            telegram_app.bot.send_message(
+                                chat_id=user_id,
+                                text=(
+                                    f"🎉 **የቴሌብር አውቶማቲክ ዲፖዚት ተሳክቷል!**\n\n"
+                                    f"💵 **የገባው መጠን፦** {amount} ETB\n"
+                                    f"💰 **አሁናዊ የዋሌት ሂሳብዎ፦** {users_db[user_id]['wallet_balance']} ETB\n\n"
+                                    f"አሁን '🎟️ ቲኬት ቁረጥ' የሚለውን በመጫን መግዛት ይችላሉ!"
+                                ),
+                                parse_mode="Markdown"
+                            ),
+                            telegram_app.loop
+                        )
+                    return {"code": 0, "message": "success"}
+
+        return {"code": -1, "message": "failed"}
+    except Exception as e:
+        logging.error(f"Webhook processing error: {e}")
+        return {"code": -1, "message": "error"}
+
+def run_web_server():
+    port = int(os.environ.get("PORT", 10000))
+    uvicorn.run(web_app, host="0.0.0.0", port=port, log_level="error")
+
+# -------------------------------------------------------------
+# TELEBIRR API HELPER FUNCTION
+# -------------------------------------------------------------
+def generate_telebirr_payment_link(user_id: int, amount: int) -> str:
+    out_trade_no = f"TXN_{user_id}_{int(time.time())}"
+    return f"https://telebirr.et/pay?trade_no={out_trade_no}&amount={amount}"
+
+# -------------------------------------------------------------
 # KEYBOARDS
 # -------------------------------------------------------------
 def get_main_menu_keyboard(user_id):
@@ -177,39 +233,6 @@ def get_back_keyboard():
 
 def get_phone_keyboard():
     return ReplyKeyboardMarkup([[KeyboardButton("📱 ስልክ ቁጥሬን ላክ", request_contact=True)]], resize_keyboard=True, one_time_keyboard=True)
-
-# -------------------------------------------------------------
-# BROADCAST FUNCTION FOR CHANNEL (EVERY 3 HOURS)
-# -------------------------------------------------------------
-async def auto_post_advertisement(context: ContextTypes.DEFAULT_TYPE):
-    """በየ 3 ሰዓቱ ወደ ቻናል ማስታወቂያ የሚልክ ተግባር"""
-    bot_info = await context.bot.get_me()
-    bot_username = bot_info.username
-
-    promo_text = (
-        f"🎟️ **እንኳን ወደ ህዳሴ ሎተሪ በደህና መጡ!** 🎟️\n\n"
-        f"የላፕቶፕ እጣዎች ይጠብቁዎታል። እድልዎን ይሞክሩ!\n\n"
-        f"💻 **የእጣው ሽልማት፦**\n"
-        f"• **Core i7 11th Gen (16GB RAM / 512GB-1TB SSD) Laptop** 💻\n\n"
-        f"💰 የቲኬት ዋጋ፦ **{TICKET_PRICE} ETB** ብቻ!\n"
-        f"🎁 የሪፈራል ቦነስ፦ **{REFERRAL_BONUS} ETB** (ሰው ሲጋብዙ የሚገኝ)\n\n"
-        f"👇 አሁኑኑ ቲኬት ለመቁረጥ እና ለመሳተፍ ከታች ያለውን ሊንክ ይጫኑ፦"
-    )
-
-    keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🎟️ አሁኑኑ ቲኬት ቁረጥ / ጀምር", url=f"https://t.me/{bot_username}?start=channel_ad")]
-    ])
-
-    try:
-        await context.bot.send_message(
-            chat_id=CHANNEL_ID,
-            text=promo_text,
-            parse_mode="Markdown",
-            reply_markup=keyboard
-        )
-        logging.info("የቻናል ማስታወቂያ በስኬት ተለቋል።")
-    except Exception as e:
-        logging.error(f"ወደ ቻናል ማስታወቂያ ሲለቀቅ ስህተት አጋጥሟል፦ {e}")
 
 # -------------------------------------------------------------
 # START & ACCOUNT HANDLERS
@@ -242,7 +265,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     welcome_text = (
         f"እንኳን ወደ **ህዳሴ ሎተሪ** በደህና መጡ! 🎟️\n\n"
         f"ለእርስዎ የተከፈተ የቦት አካውንት አልዎት። ገንዘብ ዲፖዚት በማድረግ ቲኬት መቁረጥ፣ ለሌላ ሰው ገንዘብ ማስተላለፍ ወይም 10 ሰው በመጋበዝ ገንዘብዎን ማውጣት ይችላሉ።\n\n"
-        f"💻 የሎተሪው ሽልማት፦ **Core i7 11th Gen (16GB RAM / 512GB-1TB SSD) Laptop**\n"
         f"💰 የቲኬት ዋጋ፦ **{TICKET_PRICE} ETB**\n"
         f"👥 የሪፈራል ቦነስ፦ **{REFERRAL_BONUS} ETB** (በእርስዎ ሊንክ ሰው ሲገባ)\n"
         f"🔒 ገንዘብ ማውጫ አክቲቭ ለማድረግ፦ **{REQUIRED_REFERRALS} ሰው** መጋበዝ ያስፈልጋል!\n\n"
@@ -284,8 +306,8 @@ async def start_deposit(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     
     keyboard = [
-        [InlineKeyboardButton("🏦 Commercial Bank (CBE)", callback_data="dep_cbe")],
-        [InlineKeyboardButton("📲 Telebirr", callback_data="dep_telebirr")],
+        [InlineKeyboardButton("🏦 Commercial Bank (CBE) - Manual", callback_data="dep_cbe")],
+        [InlineKeyboardButton("📲 Telebirr - Automatic API", callback_data="dep_telebirr")],
         [InlineKeyboardButton("❌ ሰርዝ", callback_data="main_menu")]
     ]
     await query.edit_message_text("📥 **ገንዘብ ማስገቢያ መንገድ ይምረጡ፦**", reply_markup=InlineKeyboardMarkup(keyboard))
@@ -296,13 +318,18 @@ async def deposit_method_selected(update: Update, context: ContextTypes.DEFAULT_
     await query.answer()
     method = "CBE" if query.data == "dep_cbe" else "Telebirr"
     context.user_data['dep_method'] = method
-    acc = CBE_ACCOUNT if method == "CBE" else TELEBIRR_NUMBER
 
-    msg = (
-        f"📌 **የተመረጠው፦ {method}**\n"
-        f"የሂሳብ ቁጥር/ስልክ፦ `{acc}`\n\n"
-        f"💵 **ወደ አካውንትዎ ማስገባት (Deposit ማድረግ) የሚፈልጉትን የብር መጠን ያስገቡ፦**"
-    )
+    if method == "Telebirr":
+        msg = (
+            f"📌 **የተመረጠው፦ Telebirr Automatic Payment**\n\n"
+            f"💵 **ወደ አካውንትዎ ማስገባት (Deposit ማድረግ) የሚፈልጉትን የብር መጠን ያስገቡ፦**"
+        )
+    else:
+        msg = (
+            f"📌 **የተመረጠው፦ Commercial Bank of Ethiopia (CBE)**\n"
+            f"የሂሳብ ቁጥር፦ `{CBE_ACCOUNT}`\n\n"
+            f"💵 **ወደ አካውንትዎ ማስገባት የሚፈልጉትን የብር መጠን ያስገቡ፦**"
+        )
     await query.edit_message_text(msg, parse_mode="Markdown")
     return DEPOSIT_AMOUNT
 
@@ -312,12 +339,29 @@ async def deposit_amount_entered(update: Update, context: ContextTypes.DEFAULT_T
         await update.message.reply_text("⚠️ እባክዎን ትክክለኛ የብር መጠን ያስገቡ (ቢያንስ 10 ETB)፦")
         return DEPOSIT_AMOUNT
 
-    context.user_data['dep_amount'] = int(text)
-    acc = CBE_ACCOUNT if context.user_data['dep_method'] == "CBE" else TELEBIRR_NUMBER
+    amount = int(text)
+    context.user_data['dep_amount'] = amount
+    method = context.user_data['dep_method']
+
+    if method == "Telebirr":
+        user_id = update.effective_user.id
+        pay_url = generate_telebirr_payment_link(user_id, amount)
+        
+        keyboard = [
+            [InlineKeyboardButton("📲 በቴሌብር ለመክፈል እዚህ ይጫኑ", url=pay_url)],
+            [InlineKeyboardButton("🔙 ወደ ዋናው ማውጫ", callback_data="main_menu")]
+        ]
+        
+        msg = (
+            f"💰 **የሚያስገቡት መጠን፦ {amount} ETB**\n\n"
+            f"ከታች ያለውን አዝራር ተጭነው በቴሌብር ክፍያውን እንደጨረሱ የዋሌት ሂሳብዎ **በአውቶማቲክ (በሰከንዶች ውስጥ)** ይሞላል! ✨"
+        )
+        await update.message.reply_text(msg, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+        return ConversationHandler.END
 
     msg = (
-        f"💰 **የሚያስገቡት መጠን፦ {text} ETB**\n\n"
-        f"እባክዎን ክፍያውን ወደዚህ ሂሳብ ይላኩ፦ `{acc}`\n\n"
+        f"💰 **የሚያስገቡት መጠን፦ {amount} ETB**\n\n"
+        f"እባክዎን ክፍያውን ወደዚህ ሂሳብ ይላኩ፦ `{CBE_ACCOUNT}`\n\n"
         f"🔐 **ክፍያውን ከፈጸሙ በኋላ የወጣውን የትራንዛክሽን ቁጥር (Txn ID) በጽሁፍ ያስገቡ ወይም የደረሰኙን የስክሪንሹት (Screenshot) ፎቶ ይላኩ፦**"
     )
     await update.message.reply_text(msg, parse_mode="Markdown")
@@ -369,7 +413,7 @@ async def deposit_proof_received(update: Update, context: ContextTypes.DEFAULT_T
         return DEPOSIT_PROOF
 
 # -------------------------------------------------------------
-# BUY TICKET FLOW
+# BUY TICKET FLOW & CHANNEL NOTIFICATION
 # -------------------------------------------------------------
 async def start_buy_ticket(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -455,7 +499,62 @@ async def process_buy_ticket(update: Update, context: ContextTypes.DEFAULT_TYPE)
         f"መልካም እድል!"
     )
     await update.message.reply_text(msg, parse_mode="Markdown", reply_markup=get_main_menu_keyboard(user_id))
+
+    try:
+        channel_post = (
+            f"🎉 **አዲስ የሎተሪ ቲኬት ተቆርጧል!** 🎟️\n\n"
+            f"🔢 **የቲኬት ቁጥር፦** `{new_tickets[0]}`" + (f" (+{qty-1} ተጨማሪ)" if qty > 1 else "") + "\n"
+            f"✨ መልካም እድል ለቲኬቱ ባለቤት!\n\n"
+            f"እርስዎስ ዕድልዎን አልሞከሩም? አሁኑኑ ቲኬት ለመቁረጥ ከታች ያለውን ቦት ይጠቀሙ 👇\n"
+            f"🤖 **ቦቱን ለመጀመር፦** @{context.bot.username}"
+        )
+        await context.bot.send_message(chat_id=CHANNEL_USERNAME, text=channel_post, parse_mode="Markdown")
+    except Exception as e:
+        logging.error(f"Failed to auto-post ticket to channel: {e}")
+
     return ConversationHandler.END
+
+# -------------------------------------------------------------
+# AUTOMATED SCHEDULED JOBS (POSTS & BACKUP)
+# -------------------------------------------------------------
+async def auto_channel_post_job(context: ContextTypes.DEFAULT_TYPE):
+    """በየ 6 ሰዓቱ ወደ ቻናሉ አውቶማቲክ የሚላክ የማስተዋወቂያ መልእክት"""
+    try:
+        post_text = (
+            f"🎟️ **እንኳን ወደ ህዳሴ ሎተሪ በደህና መጡ!** 🏆\n\n"
+            f"የላቁ የላፕቶፕ ሽልማት የያዘውን ሎተሪያችንን ይቁረጡ!\n\n"
+            f"💰 **የአንድ ቲኬት ዋጋ፦** {TICKET_PRICE} ETB ብቻ!\n"
+            f"🎁 **የጋበዙትን ያግኙ፦** ጓደኞችዎን በመጋበዝ **{REFERRAL_BONUS} ETB** ኮሚሽን ያግኙ!\n\n"
+            f"👉 **አሁኑኑ መጫወት ለመጀመር፦** @{context.bot.username}"
+        )
+        await context.bot.send_message(chat_id=CHANNEL_USERNAME, text=post_text, parse_mode="Markdown")
+        logging.info("Scheduled message posted to channel successfully.")
+    except Exception as e:
+        logging.error(f"Scheduled channel post error: {e}")
+
+# 2. የመረጃ መጥፋትን ለመከላከል የሚሰራ የአውቶማቲክ ባክአፕ ተግባር
+async def auto_backup_job(context: ContextTypes.DEFAULT_TYPE):
+    """በየ 1 ሰዓቱ የመረጃ ቋቱን ፋይል (Database) ለአድሚኑ በቴሌግራም የሚልክ"""
+    try:
+        if os.path.exists(DB_FILE):
+            total_users = len(users_db)
+            total_tickets = sum(len(u.get('ticket_numbers', [])) for u in users_db.values())
+            
+            caption = (
+                f"📦 **የአውቶማቲክ ዳታቤዝ ባክአፕ (Backup)**\n\n"
+                f"👥 አጠቃላይ ተጠቃሚዎች፦ **{total_users}**\n"
+                f"🎟️ አጠቃላይ የተቆረጡ ቲኬቶች፦ **{total_tickets}**"
+            )
+            with open(DB_FILE, "rb") as doc:
+                await context.bot.send_document(
+                    chat_id=ADMIN_ID,
+                    document=doc,
+                    caption=caption,
+                    parse_mode="Markdown"
+                )
+            logging.info("Auto backup sent to Admin successfully.")
+    except Exception as e:
+        logging.error(f"Auto backup error: {e}")
 
 # -------------------------------------------------------------
 # WITHDRAWAL FLOW
@@ -704,13 +803,18 @@ async def confirm_withdraw_admin(update: Update, context: ContextTypes.DEFAULT_T
     except Exception as e:
         await update.message.reply_text("❌ አጠቃቀም፦ `/confirm_withdraw <USER_ID> <መጠን>`")
 
+# አድሚኑ በማንኛውም ጊዜ ዳታቤዙን በዶክመንት እንዲቀበል የሚያስችል ትእዛዝ
+async def manual_backup_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID: return
+    await auto_backup_job(context)
+
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     user_id = query.from_user.id
 
     if query.data == "show_prizes":
-        p_text = "🏆 **የህዳሴ ሎተሪ የእጣ ሽልማት፦**\n\n" + "\n".join(PRIZES)
+        p_text = "🏆 **የህዳሴ ሎተሪ የሽልማት እጣ፦**\n\n" + "\n".join(PRIZES)
         await query.edit_message_text(p_text, parse_mode="Markdown", reply_markup=get_back_keyboard())
     elif query.data == "get_referral":
         ref_link = f"https://t.me/{context.bot.username}?start={user_id}"
@@ -726,7 +830,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("እንኳን ወደ **ህዳሴ ሎተሪ** በደህና መጡ! 🎟️", parse_mode="Markdown", reply_markup=get_main_menu_keyboard(user_id))
 
 # -------------------------------------------------------------
-# ERROR HANDLER FOR BOT STABILITY
+# ERROR HANDLER
 # -------------------------------------------------------------
 async def global_error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
     logging.error(f"Exception while handling an update: {context.error}")
@@ -735,19 +839,24 @@ async def global_error_handler(update: object, context: ContextTypes.DEFAULT_TYP
 # MAIN BOT EXECUTION
 # -------------------------------------------------------------
 def main():
+    global telegram_app
+
     if not BOT_TOKEN:
         logging.error("No BOT_TOKEN found!")
         return
 
-    # Start Health Check HTTP Server on background thread for Render
-    server_thread = threading.Thread(target=run_health_check_server, daemon=True)
+    server_thread = threading.Thread(target=run_web_server, daemon=True)
     server_thread.start()
 
     app = Application.builder().token(BOT_TOKEN).build()
+    telegram_app = app
 
-    # ⏱️ በየ 3 ሰዓቱ (3 * 3600 = 10800 ሰከንድ) ማስታወቂያውን በራስ-ሰር የሚልክ Schedule ማቀናበር
     job_queue = app.job_queue
-    job_queue.run_repeating(auto_post_advertisement, interval=10800, first=10)
+    # በየ 6 ሰዓቱ (21600 ሰከንድ) አውቶማቲክ ቻናሉ ላይ እንዲፖስት ማድረግ
+    job_queue.run_repeating(auto_channel_post_job, interval=21600, first=10)
+    
+    # በየ 1 ሰዓቱ (3600 ሰከንድ) አውቶማቲክ ባክአፕ ለአድሚኑ እንዲልክ ማድረግ
+    job_queue.run_repeating(auto_backup_job, interval=3600, first=30)
 
     dep_conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(start_deposit, pattern="^start_deposit$")],
@@ -784,6 +893,7 @@ def main():
     )
 
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("backup", manual_backup_admin))
     app.add_handler(dep_conv)
     app.add_handler(ticket_conv)
     app.add_handler(withdraw_conv)
@@ -794,10 +904,8 @@ def main():
     app.add_handler(MessageHandler(filters.CONTACT, handle_contact))
     app.add_handler(CallbackQueryHandler(button_handler))
 
-    # Add error handler to prevent crashing on network/conflict errors
     app.add_error_handler(global_error_handler)
 
-    # Clear pending updates on start
     app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
