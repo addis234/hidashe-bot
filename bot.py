@@ -67,6 +67,9 @@ TRANSFER_RECIPIENT, TRANSFER_AMOUNT = range(6, 8)
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "8833785126:AAEQgzZ8Wbg4t4-KDlcT1itp-E8DHbNw79M")
 ADMIN_ID = 6722504980  # የአድሚን Telegram ID
 
+# 📢 ማስታወቂያ የሚለቀቅበት ቻናል Username ወይም Channel ID
+CHANNEL_ID = "@your_channel_username"  # ምሳሌ፦ "@hidashe_lottery" ወይም ID "-100123456789"
+
 TICKET_PRICE = 50           # የአንድ ቲኬት ዋጋ (ETB)
 REFERRAL_BONUS = 10         # ለጋባዡ የሚሄድ (ETB)
 ADMIN_REFERRAL_SHARE = 40   # በሪፈራል ሲቆረጥ ለአድሚን የሚሄድ (ETB)
@@ -79,17 +82,9 @@ REQUIRED_REFERRALS = 10     # ገንዘብ ለማውጣት የሚያስፈልግ
 CBE_ACCOUNT = "1000723732108"
 TELEBIRR_NUMBER = "0914197335"
 
+# የተሻሻለው የሽልማት ዝርዝር (ላፕቶፕ ብቻ)
 PRIZES = [
-    "1ኛ እጣ፦ Core i7 14th Gen Laptop 💻",
-    "2ኛ እጣ፦ Samsung Galaxy A54 📱",
-    "3ኛ እጣ፦ Lenovo Tab P11 📲",
-    "4ኛ እጣ፦ 10,000 ETB 💵",
-    "5ኛ እጣ፦ 8,000 ETB 💵",
-    "6ኛ እጣ፦ 6,000 ETB 💵",
-    "7ኛ እጣ፦ 4,000 ETB 💵",
-    "8ኛ እጣ፦ 3,000 ETB 💵",
-    "9ኛ እጣ፦ 2,000 ETB 💵",
-    "10ኛ እጣ፦ 1,000 ETB 💵"
+    "🏆 ዋና እጣ፦ Core i7 11th Gen (16GB RAM / 512GB-1TB SSD) Laptop 💻"
 ]
 
 DB_FILE = "users_db.json"
@@ -184,6 +179,39 @@ def get_phone_keyboard():
     return ReplyKeyboardMarkup([[KeyboardButton("📱 ስልክ ቁጥሬን ላክ", request_contact=True)]], resize_keyboard=True, one_time_keyboard=True)
 
 # -------------------------------------------------------------
+# BROADCAST FUNCTION FOR CHANNEL (EVERY 3 HOURS)
+# -------------------------------------------------------------
+async def auto_post_advertisement(context: ContextTypes.DEFAULT_TYPE):
+    """በየ 3 ሰዓቱ ወደ ቻናል ማስታወቂያ የሚልክ ተግባር"""
+    bot_info = await context.bot.get_me()
+    bot_username = bot_info.username
+
+    promo_text = (
+        f"🎟️ **እንኳን ወደ ህዳሴ ሎተሪ በደህና መጡ!** 🎟️\n\n"
+        f"የላፕቶፕ እጣዎች ይጠብቁዎታል። እድልዎን ይሞክሩ!\n\n"
+        f"💻 **የእጣው ሽልማት፦**\n"
+        f"• **Core i7 11th Gen (16GB RAM / 512GB-1TB SSD) Laptop** 💻\n\n"
+        f"💰 የቲኬት ዋጋ፦ **{TICKET_PRICE} ETB** ብቻ!\n"
+        f"🎁 የሪፈራል ቦነስ፦ **{REFERRAL_BONUS} ETB** (ሰው ሲጋብዙ የሚገኝ)\n\n"
+        f"👇 አሁኑኑ ቲኬት ለመቁረጥ እና ለመሳተፍ ከታች ያለውን ሊንክ ይጫኑ፦"
+    )
+
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🎟️ አሁኑኑ ቲኬት ቁረጥ / ጀምር", url=f"https://t.me/{bot_username}?start=channel_ad")]
+    ])
+
+    try:
+        await context.bot.send_message(
+            chat_id=CHANNEL_ID,
+            text=promo_text,
+            parse_mode="Markdown",
+            reply_markup=keyboard
+        )
+        logging.info("የቻናል ማስታወቂያ በስኬት ተለቋል።")
+    except Exception as e:
+        logging.error(f"ወደ ቻናል ማስታወቂያ ሲለቀቅ ስህተት አጋጥሟል፦ {e}")
+
+# -------------------------------------------------------------
 # START & ACCOUNT HANDLERS
 # -------------------------------------------------------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -214,6 +242,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     welcome_text = (
         f"እንኳን ወደ **ህዳሴ ሎተሪ** በደህና መጡ! 🎟️\n\n"
         f"ለእርስዎ የተከፈተ የቦት አካውንት አልዎት። ገንዘብ ዲፖዚት በማድረግ ቲኬት መቁረጥ፣ ለሌላ ሰው ገንዘብ ማስተላለፍ ወይም 10 ሰው በመጋበዝ ገንዘብዎን ማውጣት ይችላሉ።\n\n"
+        f"💻 የሎተሪው ሽልማት፦ **Core i7 11th Gen (16GB RAM / 512GB-1TB SSD) Laptop**\n"
         f"💰 የቲኬት ዋጋ፦ **{TICKET_PRICE} ETB**\n"
         f"👥 የሪፈራል ቦነስ፦ **{REFERRAL_BONUS} ETB** (በእርስዎ ሊንክ ሰው ሲገባ)\n"
         f"🔒 ገንዘብ ማውጫ አክቲቭ ለማድረግ፦ **{REQUIRED_REFERRALS} ሰው** መጋበዝ ያስፈልጋል!\n\n"
@@ -681,7 +710,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = query.from_user.id
 
     if query.data == "show_prizes":
-        p_text = "🏆 **የህዳሴ ሎተሪ የሽልማት እጣዎች፦**\n\n" + "\n".join(PRIZES)
+        p_text = "🏆 **የህዳሴ ሎተሪ የእጣ ሽልማት፦**\n\n" + "\n".join(PRIZES)
         await query.edit_message_text(p_text, parse_mode="Markdown", reply_markup=get_back_keyboard())
     elif query.data == "get_referral":
         ref_link = f"https://t.me/{context.bot.username}?start={user_id}"
@@ -715,6 +744,10 @@ def main():
     server_thread.start()
 
     app = Application.builder().token(BOT_TOKEN).build()
+
+    # ⏱️ በየ 3 ሰዓቱ (3 * 3600 = 10800 ሰከንድ) ማስታወቂያውን በራስ-ሰር የሚልክ Schedule ማቀናበር
+    job_queue = app.job_queue
+    job_queue.run_repeating(auto_post_advertisement, interval=10800, first=10)
 
     dep_conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(start_deposit, pattern="^start_deposit$")],
