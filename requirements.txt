@@ -4,4 +4,3 @@ uvicorn
 pytesseract
 pillow
 requests
-
