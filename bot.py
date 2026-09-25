@@ -532,7 +532,6 @@ async def auto_channel_post_job(context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logging.error(f"Scheduled channel post error: {e}")
 
-# 2. የመረጃ መጥፋትን ለመከላከል የሚሰራ የአውቶማቲክ ባክአፕ ተግባር
 async def auto_backup_job(context: ContextTypes.DEFAULT_TYPE):
     """በየ 1 ሰዓቱ የመረጃ ቋቱን ፋይል (Database) ለአድሚኑ በቴሌግራም የሚልክ"""
     try:
@@ -803,7 +802,6 @@ async def confirm_withdraw_admin(update: Update, context: ContextTypes.DEFAULT_T
     except Exception as e:
         await update.message.reply_text("❌ አጠቃቀም፦ `/confirm_withdraw <USER_ID> <መጠን>`")
 
-# አድሚኑ በማንኛውም ጊዜ ዳታቤዙን በዶክመንት እንዲቀበል የሚያስችል ትእዛዝ
 async def manual_backup_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID: return
     await auto_backup_job(context)
@@ -851,12 +849,16 @@ def main():
     app = Application.builder().token(BOT_TOKEN).build()
     telegram_app = app
 
+    # JobQueue መኖሩን በደህና መንገድ ማረጋገጥ
     job_queue = app.job_queue
-    # በየ 6 ሰዓቱ (21600 ሰከንድ) አውቶማቲክ ቻናሉ ላይ እንዲፖስት ማድረግ
-    job_queue.run_repeating(auto_channel_post_job, interval=21600, first=10)
-    
-    # በየ 1 ሰዓቱ (3600 ሰከንድ) አውቶማቲክ ባክአፕ ለአድሚኑ እንዲልክ ማድረግ
-    job_queue.run_repeating(auto_backup_job, interval=3600, first=30)
+    if job_queue:
+        # በየ 6 ሰዓቱ (21600 ሰከንድ) አውቶማቲክ ቻናሉ ላይ እንዲፖስት ማድረግ
+        job_queue.run_repeating(auto_channel_post_job, interval=21600, first=10)
+        
+        # በየ 1 ሰዓቱ (3600 ሰከንድ) አውቶማቲክ ባክአፕ ለአድሚኑ እንዲልክ ማድረግ
+        job_queue.run_repeating(auto_backup_job, interval=3600, first=30)
+    else:
+        logging.warning("JobQueue is not available. Scheduled jobs will be disabled.")
 
     dep_conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(start_deposit, pattern="^start_deposit$")],
