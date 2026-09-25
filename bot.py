@@ -406,8 +406,29 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(welcome_text, parse_mode="Markdown", reply_markup=get_main_menu_keyboard())
 
 # -------------------------------------------------------------
-# 5. ADMIN HANDLERS (/approve, /stats, /draw)
+# 5. ADMIN HANDLERS & AUTO-BACKUP FUNCTIONS
 # -------------------------------------------------------------
+async def send_auto_backup(context: ContextTypes.DEFAULT_TYPE):
+    """በየ 6 ሰዓቱ አውቶማቲክ ዳታቤዙን ለአድሚን ይልካል"""
+    if os.path.exists(DB_FILE):
+        try:
+            with open(DB_FILE, 'rb') as doc:
+                await context.bot.send_document(
+                    chat_id=ADMIN_ID,
+                    document=doc,
+                    caption="📦 **የህዳሴ ሎተሪ አውቶማቲክ ዳታቤዝ ባካፕ (Backup)**"
+                )
+        except Exception as e:
+            logging.error(f"Backup sending error: {e}")
+
+async def get_db_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """አድሚኑ በፈለገው ጊዜ /getdb በማለት ፋይሉን እንዲያወርድ ያደርጋል"""
+    if update.effective_user.id != ADMIN_ID:
+        return
+    if os.path.exists(DB_FILE):
+        with open(DB_FILE, 'rb') as doc:
+            await update.message.reply_document(document=doc, caption="📂 የቅርብ ጊዜው የዳታቤዝ ፋይል (users_db.json)")
+
 async def approve_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
@@ -477,9 +498,14 @@ def main():
     app.add_handler(CommandHandler("approve", approve_payment))
     app.add_handler(CommandHandler("stats", show_stats))
     app.add_handler(CommandHandler("draw", draw_lottery))
+    app.add_handler(CommandHandler("getdb", get_db_command))  # አድሚን ዳታቤዙን በፈለገበት ጊዜ ለማውረድ
     
     app.add_handler(MessageHandler(filters.CONTACT, handle_contact))
     app.add_handler(CallbackQueryHandler(button_handler))
+
+    # በየ 6 ሰዓቱ አውቶማቲክ ባካፕ ለአድሚን Telegram ID የሚልክ Job Queue setup
+    if app.job_queue:
+        app.job_queue.run_repeating(send_auto_backup, interval=21600, first=30)
 
     logging.info("Starting Bot Polling...")
     app.run_polling()
