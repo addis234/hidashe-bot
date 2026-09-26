@@ -46,10 +46,16 @@ WITHDRAW_FEE = 10           # የትራንስፈር አገልግሎት ክፍያ
 TRANSFER_FEE = 1            # ከዋሌት ወደ ዋሌት የትራንስፈር አገልግሎት ክፍያ
 REQUIRED_REFERRALS = 10     # ገንዘብ ለማውጣት የሚያስፈልግ አነስተኛ የሪፈራል ብዛት
 
-CBE_ACCOUNT = "1000723732108"
-TELEBIRR_NUMBER = "0914197335"
+# -------------------------------------------------------------
+# የአካውንት መረጃዎች (VALIDATION ACCOUNT DETAILS)
+# -------------------------------------------------------------
+MY_CBE_ACCOUNT_FULL = "1000723732108"
+MY_CBE_ACCOUNT_END = "2108"
+MY_CBE_NAME = "Addis Alemayehu"
 
-# 1. የተስተካከለው የሽልማት ዝርዝር (Core i7 11th Gen Laptop ብቻ)
+MY_TELEBIRR_PHONE = "0981212774"
+MY_TELEBIRR_NAME = "Addis"
+
 PRIZES = [
     "🏆 የሎተሪው ዋና እጣ፦ Core i7 11th Generation Laptop 💻"
 ]
@@ -150,6 +156,73 @@ def ensure_admin_exists():
         save_db()
 
 ensure_admin_exists()
+
+# -------------------------------------------------------------
+# PAYMENT VALIDATION LOGIC (CBE & TELEBIRR)
+# -------------------------------------------------------------
+def validate_cbe_sms(text):
+    text_lower = text.lower()
+    
+    has_account = MY_CBE_ACCOUNT_END in text or MY_CBE_ACCOUNT_FULL in text
+    has_name = MY_CBE_NAME.lower() in text_lower
+    
+    if not (has_account or has_name):
+        return False, "❌ ስህተት፦ ክፍያው ወደእኛ የ CBE አካውንት አልተደረገም!"
+
+    link_match = re.search(r"mreceipt\.cbe\.com\.et/([A-Za-z0-9_-]+)", text)
+    if not link_match:
+        return False, "❌ ስህተት፦ ህጋዊ የ CBE ትራንዛክሽን ሊንክ ወይም ቁጥር አልተገኘም!"
+    
+    tx_id = link_match.group(1)
+
+    amount_match = re.search(r"(?:transferred|paid)\s*ETB\s*([\d\.]+)", text, re.IGNORECASE)
+    if not amount_match:
+        return False, "❌ ስህተት፦ የትራንዛክሽኑን የገንዘብ መጠን ማወቅ አልተቻለም!"
+    
+    amount = float(amount_match.group(1))
+    return True, tx_id, amount
+
+def validate_telebirr_text(text):
+    text_lower = text.lower()
+
+    has_phone = MY_TELEBIRR_PHONE in text or MY_TELEBIRR_PHONE[1:] in text
+    has_name = MY_TELEBIRR_NAME.lower() in text_lower
+    
+    if not (has_phone or has_name):
+        return False, "❌ ስህተት፦ ክፍያው ወደእኛ ቴሌብር አካውንት አልተደረገም!"
+
+    tx_match = re.search(r"(?:transaction\s*(?:number|id)?\s*is|receipt/)\s*([A-Z0-9]{8,12})", text, re.IGNORECASE)
+    if not tx_match:
+        return False, "❌ ስህተት፦ ህጋዊ የቴሌብር ትራንዛክሽን ቁጥር ማግኘት አልተቻለም!"
+    
+    tx_id = tx_match.group(1)
+
+    amount_match = re.search(r"paid\s*ETB\s*([\d\.]+)", text, re.IGNORECASE)
+    if not amount_match:
+        return False, "❌ ስህተት፦ የቴሌብር ክፍያ መጠኑን ማወቅ አልተቻለም!"
+    
+    amount = float(amount_match.group(1))
+    return True, tx_id, amount
+
+def process_payment_input(text_content):
+    if "Banking with CBE" in text_content or "mreceipt.cbe.com.et" in text_content:
+        success, result, *extra = validate_cbe_sms(text_content)
+        if not success:
+            return False, result, 0
+        return True, result, extra[0]
+
+    elif "telebirr" in text_content.lower() or "transactioninfo.ethiotelecom.et" in text_content:
+        success, result, *extra = validate_telebirr_text(text_content)
+        if not success:
+            return False, result, 0
+        return True, result, extra[0]
+
+    else:
+        # አጠቃላይ Regular Expression ፍለጋ (fallback)
+        txn_match = re.search(r'\b(FT[A-Z0-9]{8,12}|[A-Z0-9]{10,14})\b', text_content, re.IGNORECASE)
+        if txn_match:
+            return True, txn_match.group(1).upper(), 0  # Amount አልተገኘም
+        return False, "❌ ያልታወቀ የመልእክት ዓይነት! እባክዎን ትክክለኛ የ telebirr ወይም የ CBE ደረሰኝ ይላኩ።", 0
 
 # -------------------------------------------------------------
 # FASTAPI WEB SERVER FOR RENDER & TELEBIRR WEBHOOK
@@ -327,7 +400,8 @@ async def deposit_method_selected(update: Update, context: ContextTypes.DEFAULT_
     else:
         msg = (
             f"📌 **የተመረጠው፦ Commercial Bank of Ethiopia (CBE)**\n"
-            f"የሂሳብ ቁጥር፦ `{CBE_ACCOUNT}`\n\n"
+            f"የሂሳብ ቁጥር፦ `{MY_CBE_ACCOUNT_FULL}`\n"
+            f"የአካውንት ስም፦ `{MY_CBE_NAME}`\n\n"
             f"💵 **ወደ አካውንትዎ ማስገባት የሚፈልጉትን የብር መጠን ያስገቡ፦**"
         )
     await query.edit_message_text(msg, parse_mode="Markdown")
@@ -361,15 +435,15 @@ async def deposit_amount_entered(update: Update, context: ContextTypes.DEFAULT_T
 
     msg = (
         f"💰 **የሚያስገቡት መጠን፦ {amount} ETB**\n\n"
-        f"እባክዎን ክፍያውን ወደዚህ ሂሳብ ይላኩ፦ `{CBE_ACCOUNT}`\n\n"
-        f"🔐 **ክፍያውን ከፈጸሙ በኋላ የወጣውን የትራንዛክሽን ቁጥር (Txn ID) በጽሁፍ ያስገቡ ወይም የደረሰኙን የስክሪንሹት (Screenshot) ፎቶ ይላኩ፦**"
+        f"እባክዎን ክፍያውን ወደዚህ ሂሳብ ይላኩ፦ `{MY_CBE_ACCOUNT_FULL}` ({MY_CBE_NAME})\n\n"
+        f"🔐 **ክፍያውን ከፈጸሙ በኋላ የወጣውን የትራንዛክሽን SMS በጽሁፍ ያስገቡ ወይም የደረሰኙን የስክሪንሹት (Screenshot) ፎቶ ይላኩ፦**"
     )
     await update.message.reply_text(msg, parse_mode="Markdown")
     return DEPOSIT_PROOF
 
 async def deposit_proof_received(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    amount = context.user_data.get('dep_amount', 0)
+    expected_amount = context.user_data.get('dep_amount', 0)
     text_content = update.message.text or update.message.caption or ""
 
     if update.message.photo:
@@ -385,32 +459,37 @@ async def deposit_proof_received(update: Update, context: ContextTypes.DEFAULT_T
             if os.path.exists(file_path):
                 os.remove(file_path)
 
-    txn_match = re.search(r'\b(FT[A-Z0-9]{8,12}|[A-Z0-9]{10,14})\b', text_content, re.IGNORECASE)
+    # የትራንዛክሽን መረጃን መፈተሽ (Validation)
+    success, result_msg_or_tx, parsed_amount = process_payment_input(text_content)
 
-    if txn_match:
-        txn_id = txn_match.group(1).upper()
-        if txn_id in used_transactions:
-            await update.message.reply_text("⚠️ **ይህ የትራንዛክሽን ቁጥር ቀደም ሲል ጥቅም ላይ ውሏል!**")
-            return DEPOSIT_PROOF
-
-        used_transactions.add(txn_id)
-        save_used_txns()
-
-        users_db[user_id]['wallet_balance'] += amount
-        save_db()
-
-        success_msg = (
-            f"🎉 **ዲፖዚትዎ ተሳክቷል!**\n\n"
-            f"🔖 **የትራንዛክሽን ቁጥር፦** `{txn_id}`\n"
-            f"💵 **በአካውንትዎ ላይ የተጨመረ፦** {amount} ETB\n"
-            f"💰 **አሁናዊ የዋሌት ሂሳብዎ፦** {users_db[user_id]['wallet_balance']} ETB\n\n"
-            f"አሁን '🎟️ ቲኬት ቁረጥ' የሚለውን በመጫን መግዛት ይችላሉ!"
-        )
-        await update.message.reply_text(success_msg, parse_mode="Markdown", reply_markup=get_main_menu_keyboard(user_id))
-        return ConversationHandler.END
-    else:
-        await update.message.reply_text("❌ **የትራንዛክሽን ቁጥር ማግኘት አልተቻለም!** እባክዎን ትክክለኛ የትራንዛክሽን ቁጥር ወይም ግልጽ ፎቶ ይላኩ፦")
+    if not success:
+        await update.message.reply_text(f"{result_msg_or_tx}\n\nእባክዎን ትክክለኛ የትራንዛክሽን ቁጥር ወይም ደረሰኝ እንደገና ይላኩ፦")
         return DEPOSIT_PROOF
+
+    txn_id = result_msg_or_tx
+
+    if txn_id in used_transactions:
+        await update.message.reply_text(f"⚠️ **ይህ የትራንዛክሽን ቁጥር (`{txn_id}`) ቀደም ሲል ጥቅም ላይ ውሏል!**")
+        return DEPOSIT_PROOF
+
+    # በደረሰኙ ላይ የተገኘው የብር መጠን ካለ እሱን መጠቀም፣ ከሌለ ተጠቃሚው ያስገባውን መጠቀም
+    added_amount = parsed_amount if parsed_amount > 0 else expected_amount
+
+    used_transactions.add(txn_id)
+    save_used_txns()
+
+    users_db[user_id]['wallet_balance'] += added_amount
+    save_db()
+
+    success_msg = (
+        f"🎉 **ዲፖዚትዎ ተሳክቷል!**\n\n"
+        f"🔖 **የትራንዛክሽን ቁጥር፦** `{txn_id}`\n"
+        f"💵 **በአካውንትዎ ላይ የተጨመረ፦** {added_amount} ETB\n"
+        f"💰 **አሁናዊ የዋሌት ሂሳብዎ፦** {users_db[user_id]['wallet_balance']} ETB\n\n"
+        f"አሁን '🎟️ ቲኬት ቁረጥ' የሚለውን በመጫን መግዛት ይችላሉ!"
+    )
+    await update.message.reply_text(success_msg, parse_mode="Markdown", reply_markup=get_main_menu_keyboard(user_id))
+    return ConversationHandler.END
 
 # -------------------------------------------------------------
 # BUY TICKET FLOW & CHANNEL NOTIFICATION
@@ -435,7 +514,7 @@ async def start_buy_ticket(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(msg, parse_mode="Markdown", reply_markup=get_back_keyboard())
         return ConversationHandler.END
 
-    max_tickets = balance // TICKET_PRICE
+    max_tickets = int(balance // TICKET_PRICE)
     msg = (
         f"🎟️ **ቲኬት መቁረጫ**\n\n"
         f"የዋሌት ሂሳብዎ፦ **{balance} ETB**\n"
@@ -518,7 +597,6 @@ async def process_buy_ticket(update: Update, context: ContextTypes.DEFAULT_TYPE)
 # AUTOMATED SCHEDULED JOBS (POSTS & BACKUP)
 # -------------------------------------------------------------
 async def auto_channel_post_job(context: ContextTypes.DEFAULT_TYPE):
-    """በየ 6 ሰዓቱ ወደ ቻናሉ አውቶማቲክ የሚላክ የማስተዋወቂያ መልእክት"""
     try:
         post_text = (
             f"🎟️ **እንኳን ወደ ህዳሴ ሎተሪ በደህና መጡ!** 🏆\n\n"
@@ -533,7 +611,6 @@ async def auto_channel_post_job(context: ContextTypes.DEFAULT_TYPE):
         logging.error(f"Scheduled channel post error: {e}")
 
 async def auto_backup_job(context: ContextTypes.DEFAULT_TYPE):
-    """በየ 1 ሰዓቱ የመረጃ ቋቱን ፋይል (Database) ለአድሚኑ በቴሌግራም የሚልክ"""
     try:
         if os.path.exists(DB_FILE):
             total_users = len(users_db)
@@ -849,13 +926,9 @@ def main():
     app = Application.builder().token(BOT_TOKEN).build()
     telegram_app = app
 
-    # JobQueue መኖሩን በደህና መንገድ ማረጋገጥ
     job_queue = app.job_queue
     if job_queue:
-        # በየ 6 ሰዓቱ (21600 ሰከንድ) አውቶማቲክ ቻናሉ ላይ እንዲፖስት ማድረግ
         job_queue.run_repeating(auto_channel_post_job, interval=21600, first=10)
-        
-        # በየ 1 ሰዓቱ (3600 ሰከንድ) አውቶማቲክ ባክአፕ ለአድሚኑ እንዲልክ ማድረግ
         job_queue.run_repeating(auto_backup_job, interval=3600, first=30)
     else:
         logging.warning("JobQueue is not available. Scheduled jobs will be disabled.")
