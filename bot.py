@@ -4,22 +4,34 @@ import json
 import random
 import re
 import asyncio
+import threading
+from typing import Optional
+
 import uvicorn
 from fastapi import FastAPI
-import threading
-from PIL import Image
-import pytesseract
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, ReplyKeyboardMarkup
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
-    Application, CommandHandler, CallbackQueryHandler, MessageHandler, ContextTypes, ConversationHandler, filters
+    Application, CommandHandler, CallbackQueryHandler, MessageHandler,
+    ContextTypes, ConversationHandler, filters
 )
 
+# የኦሲአር ፋይሎች ካልተጫኑ ቦቱ እንዳይዘጋ በደህንነት ማስተካከል
+try:
+    from PIL import Image
+    import pytesseract
+    OCR_AVAILABLE = True
+except ImportError:
+    OCR_AVAILABLE = False
+
 # -------------------------------------------------------------
-# CONFIGURATIONS
+# CONFIGURATIONS & ENVIRONMENT VARIABLES
 # -------------------------------------------------------------
-BOT_TOKEN = os.environ.get("BOT_TOKEN", "8833785126:AAEQgzZ8Wbg4t4-KDlcT1itp-E8DHbNw79M")
-ADMIN_ID = 6722504980
-CHANNEL_USERNAME = "@YourChannelUsername"
+BOT_TOKEN = os.environ.get("BOT_TOKEN")
+if not BOT_TOKEN:
+    raise ValueError("CRITICAL ERROR: 'BOT_TOKEN' environment variable is not set.")
+
+ADMIN_ID = int(os.environ.get("ADMIN_ID", "6722504980"))
+CHANNEL_USERNAME = os.environ.get("CHANNEL_USERNAME", "@YourChannelUsername")
 
 TICKET_PRICE = 50
 REFERRAL_BONUS = 10
@@ -28,16 +40,15 @@ WITHDRAW_FEE = 10
 TRANSFER_FEE = 1
 REQUIRED_REFERRALS = 10
 
-MY_CBE_ACCOUNT_FULL = "1000723732108"
-MY_CBE_NAME = "Addis Alemayehu"
-MY_TELEBIRR_PHONE = "0981212774"
-MY_TELEBIRR_NAME = "Addis"
+MY_CBE_ACCOUNT_FULL = os.environ.get("CBE_ACCOUNT", "1000723732108")
+MY_CBE_NAME = os.environ.get("CBE_NAME", "Addis Alemayehu")
+MY_TELEBIRR_PHONE = os.environ.get("TELEBIRR_PHONE", "0981212774")
+MY_TELEBIRR_NAME = os.environ.get("TELEBIRR_NAME", "Addis")
 
 PRIZES = ["🏆 የሎተሪው ዋና እጣ፦ Core i7 11th Generation Laptop 💻"]
 
 DB_FILE = "users_db.json"
 USED_TXNS_FILE = "used_txns.json"
-SYSTEM_SMS_FILE = "system_sms.json"
 
 # CONVERSATION STATES
 DEPOSIT_METHOD, DEPOSIT_AMOUNT, DEPOSIT_PROOF = range(3)
@@ -46,7 +57,12 @@ BUY_TICKET_QTY = range(5, 6)
 TRANSFER_RECIPIENT, TRANSFER_AMOUNT, TRANSFER_PIN = range(6, 9)
 SET_PIN_STATE = range(9, 10)
 
-logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
+
+db_lock = threading.Lock()
 
 # -------------------------------------------------------------
 # FASTAPI / WEB SERVER FOR RENDER HEALTH CHECK
@@ -55,16 +71,16 @@ web_app = FastAPI()
 
 @web_app.get("/")
 def read_root():
-    return {"status": "bot is running"}
+    return {"status": "ok", "bot": "running"}
 
 def run_web_server():
     port = int(os.environ.get("PORT", 8080))
-    uvicorn.run(web_app, host="0.0.0.0", port=port)
+    uvicorn.run(web_app, host="0.0.0.0", port=port, log_level="warning")
 
 # -------------------------------------------------------------
-# DATABASE FUNCTIONS
+# DATABASE FUNCTIONS (Thread-Safe)
 # -------------------------------------------------------------
-def load_db():
+def load_db() -> dict:
     if os.path.exists(DB_FILE):
         try:
             with open(DB_FILE, "r", encoding="utf-8") as f:
@@ -85,11 +101,12 @@ def load_db():
     return {}
 
 def save_db():
-    try:
-        with open(DB_FILE, "w", encoding="utf-8") as f:
-            json.dump(users_db, f, ensure_ascii=False, indent=2)
-    except Exception as e:
-        logging.error(f"Error saving DB: {e}")
+    with db_lock:
+        try:
+            with open(DB_FILE, "w", encoding="utf-8") as f:
+                json.dump(users_db, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            logging.error(f"Error saving DB: {e}")
 
 users_db = load_db()
 
@@ -107,7 +124,7 @@ ensure_admin_exists()
 # -------------------------------------------------------------
 # KEYBOARDS
 # -------------------------------------------------------------
-def get_main_menu_keyboard(user_id):
+def get_main_menu_keyboard(user_id: int) -> InlineKeyboardMarkup:
     user = users_db.get(user_id, {})
     balance = user.get('wallet_balance', 0)
     ref_bal = user.get('ref_balance', 0)
@@ -120,7 +137,7 @@ def get_main_menu_keyboard(user_id):
     ]
     return InlineKeyboardMarkup(keyboard)
 
-def get_back_keyboard():
+def get_back_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([[InlineKeyboardButton("🔙 ወደ ዋናው ማውጫ", callback_data="main_menu")]])
 
 # -------------------------------------------------------------
@@ -128,12 +145,11 @@ def get_back_keyboard():
 # -------------------------------------------------------------
 async def cancel_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
+    user_id = update.effective_user.id
     if query:
         await query.answer()
-        user_id = query.from_user.id
         await query.edit_message_text("ለወጡበት ተግባር ሰርዘዋል። ወደ ዋናው ማውጫ ተመልሰዋል፦", reply_markup=get_main_menu_keyboard(user_id))
     else:
-        user_id = update.effective_user.id
         await update.message.reply_text("ወደ ዋናው ማውጫ ተመልሰዋል፦", reply_markup=get_main_menu_keyboard(user_id))
     return ConversationHandler.END
 
@@ -222,7 +238,7 @@ async def save_pin_entered(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 # -------------------------------------------------------------
-# START & COMMANDS
+# START & GENERAL CALLBACK HANDLERS
 # -------------------------------------------------------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
@@ -249,7 +265,16 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if query.data == "my_account":
         u = users_db.get(user_id, {})
-        msg = f"👤 **የእርስዎ አካውንት**\n\n🆔 ID: `{user_id}`\n💵 Wallet: **{u.get('wallet_balance', 0)} ETB**\n🔑 PIN: `{u.get('pin', '1234')}`"
+        msg = f"👤 **የእርስዎ አካውንት**\n\n🆔 ID: `{user_id}`\n💵 Wallet: **{u.get('wallet_balance', 0)} ETB**\n🎁 Ref Bonus: **{u.get('ref_balance', 0)} ETB**\n🔑 PIN: `{u.get('pin', '1234')}`"
+        await query.edit_message_text(msg, parse_mode="Markdown", reply_markup=get_back_keyboard())
+    elif query.data == "show_prizes":
+        prizes_fmt = "\n".join(PRIZES)
+        msg = f"🎁 **የሎተሪ ሽልማቶች ዝርዝር፦**\n\n{prizes_fmt}"
+        await query.edit_message_text(msg, parse_mode="Markdown", reply_markup=get_back_keyboard())
+    elif query.data == "get_referral":
+        bot_username = (await context.bot.get_me()).username
+        ref_link = f"https://t.me/{bot_username}?start={user_id}"
+        msg = f"👥 **የእርስዎ የሪፈራል ሊንክ፦**\n\n`{ref_link}`\n\nለእያንዳንዱ ጋበዙት ሰው **{REFERRAL_BONUS} ETB** ያገኛሉ!"
         await query.edit_message_text(msg, parse_mode="Markdown", reply_markup=get_back_keyboard())
     elif query.data == "main_menu":
         await query.edit_message_text("እንኳን ወደ **ህዳሴ ሎተሪ** በደህና መጡ! 🎟️", parse_mode="Markdown", reply_markup=get_main_menu_keyboard(user_id))
@@ -258,13 +283,13 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ERROR HANDLER
 # -------------------------------------------------------------
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
-    logging.error(f"Exception while handling an update: {context.error}")
+    logging.error(f"Exception while handling update: {context.error}", exc_info=context.error)
 
 # -------------------------------------------------------------
 # MAIN APP SETUP
 # -------------------------------------------------------------
 def main():
-    # FastAPI ሰርቨሩን በጀርባ (Background Thread) ማስጀመር
+    # Render/Hosting ላይ ጤናማነትን ማረጋገጫ (Health check)
     threading.Thread(target=run_web_server, daemon=True).start()
 
     app = Application.builder().token(BOT_TOKEN).build()
@@ -302,9 +327,9 @@ def main():
     app.add_handler(pin_conv)
     app.add_handler(CallbackQueryHandler(button_handler))
 
-    # Error handler መመዝገብ
     app.add_error_handler(error_handler)
 
+    logging.info("ቦቱ መስራት ጀምሯል...")
     app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
