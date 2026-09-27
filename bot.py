@@ -32,7 +32,7 @@ if not BOT_TOKEN:
     logging.warning("BOT_TOKEN environment variable ውስጥ አልተዘጋጀም!")
 
 ADMIN_ID = int(os.environ.get("ADMIN_ID", "6722504980"))
-CHANNEL_USERNAME = "@hdase1221"  # የቻናሉ አድራሻ
+CHANNEL_USERNAME = "@hdase1221"
 
 MY_CBE_NAME = "Addis Alemayehu"
 MY_TELEBIRR_NAME = "Addis"
@@ -123,22 +123,19 @@ def get_main_keyboard():
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
 # -------------------------------------------------------------
-# VERIFICATION LOGIC (7. የተቀባይ ስም እና የብር መጠን)
+# VERIFICATION LOGIC
 # -------------------------------------------------------------
 def verify_receipt_text(text: str, expected_amount: int, method: str) -> Tuple[bool, str]:
     clean_text = text.lower()
 
-    # 1. የተቀባይ ስም መኖሩን ማረጋገጥ
     if "addis" not in clean_text:
         return False, "ገንዘቡን አላስገቡም እባክዎ ገንዘቡን ገቢ በማድረግ ትኬትዎን ይውሰዱ!"
 
-    # 2. የብር መጠኑ እኩል መሆኑን ማረጋገጥ
     amount_str = f"{expected_amount:,}"
     amount_pattern = rf"\b({expected_amount}|{amount_str})(\.00)?\b"
     if not re.search(amount_pattern, text):
         return False, "ገንዘቡን አላስገቡም እባክዎ ገንዘቡን ገቢ በማድረግ ትኬትዎን ይውሰዱ!"
 
-    # 3. የትራንዛክሽን ቁጥር መደጋገሙን መፈተሽ
     txn_match = re.search(r'\b(FT[A-Za-z0-9]{8,10}|[A-Za-z0-9]{10,12})\b', text)
     if txn_match:
         txn_id = txn_match.group(1).upper()
@@ -155,7 +152,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     first_name = update.effective_user.first_name or "ተጠቃሚ"
     
-    # 3. አካውንት አውቶማቲካሊ መክፈት
     if user_id not in users_db:
         users_db[user_id] = {
             'first_name': first_name,
@@ -171,7 +167,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         users_db[user_id]['first_name'] = first_name
         save_db()
 
-    # 1. እንኳን ወደ ህዳሴ ዲጂታል ሎተሪ በደህና መጡ
     await update.message.reply_text(
         "✨ **እንኳን ወደ ህዳሴ ዲጂታል ሎተሪ በደህና መጡ!** ✨\n\n"
         "የሎተሪ ትኬት በመቁረጥ የተለያዩ አጓጊ ሽልማቶችን ያሸንፉ!\n"
@@ -206,6 +201,7 @@ async def show_rewards(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "✨ ሌሎች አጓጊ ሽልማቶችን በ ሁለተኛ ዙር ይጠብቁን!"
     )
     await update.message.reply_text(msg, parse_mode="Markdown")
+    return ConversationHandler.END
 
 async def show_wallet(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -222,6 +218,7 @@ async def show_wallet(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"🔗 **የእርስዎ ሪፈራል ኮድ፦** `{ref_code}`"
     )
     await update.message.reply_text(msg, parse_mode="Markdown")
+    return ConversationHandler.END
 
 # -------------------------------------------------------------
 # 🎟 TICKET BUYING (DEPOSIT) FLOW
@@ -319,7 +316,6 @@ async def deposit_proof_received(update: Update, context: ContextTypes.DEFAULT_T
     users_db[user_id]['phone'] = phone
     users_db[user_id].setdefault('tickets', []).append(ticket_no)
 
-    # 5. Referral Bonus Logic (10 Birr)
     ref_owner_id = None
     if used_ref_code:
         for uid, udata in users_db.items():
@@ -340,7 +336,6 @@ async def deposit_proof_received(update: Update, context: ContextTypes.DEFAULT_T
 
     my_ref_code = users_db[user_id].get('ref_code')
 
-    # 7. አፕሩቭ ከሆነ በኋላ ለደንበኛው የሚላክ
     await update.message.reply_text(
         f"🎉 **ክፍያዎ ተረጋግጦ ትኬትዎ ተቆርጧል!**\n\n"
         f"🎟 **የእጣ ቁጥር፦** `{ticket_no}`\n"
@@ -536,7 +531,7 @@ async def withdraw_pin_received(update: Update, context: ContextTypes.DEFAULT_TY
     return ConversationHandler.END
 
 # -------------------------------------------------------------
-# 10. 📢 የCHANNEL 3 ሰዓት አውቶማቲክ ማስታወቂያ
+# 📢 የCHANNEL 3 ሰዓት አውቶማቲክ ማስታወቂያ
 # -------------------------------------------------------------
 async def post_channel_updates(context: ContextTypes.DEFAULT_TYPE):
     if not users_db:
@@ -577,7 +572,7 @@ async def post_channel_updates(context: ContextTypes.DEFAULT_TYPE):
         logging.error(f"Channel Broadcast Error: {e}")
 
 # -------------------------------------------------------------
-# 8. 📊 ADMIN STATS
+# 📊 ADMIN STATS
 # -------------------------------------------------------------
 async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
@@ -598,7 +593,7 @@ async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(msg, parse_mode="Markdown")
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("ሂደቱ ተሰርዟል፤ ወደ ዋና ማውጫ ተመልሰዋል፦", reply_markup=get_main_keyboard())
+    await update.message.reply_text("ወደ ዋና ማውጫ ተመልሰዋል፦", reply_markup=get_main_keyboard())
     return ConversationHandler.END
 
 # -------------------------------------------------------------
@@ -614,16 +609,21 @@ def main():
 
     app = Application.builder().token(BOT_TOKEN).build()
 
-    # በየ 3 ሰዓቱ (10800 ሰከንድ) ማስታወቂያ ለቻናል እንዲላክ መደብ
     if app.job_queue:
         app.job_queue.run_repeating(post_channel_updates, interval=10800, first=10)
+
+    # አዝራሮች/Buttons ከውይይት እንዲያስወጡ የሚያደርግ Fallback Filter
+    menu_button_filter = filters.Regex("^(🎟 ትኬት ይቁረጡ|💸 ገንዘብ ያውጡ|🔄 ገንዘብ ይላኩ|🎁 የሽልማት ዝርዝር|💼 የኔ ዋሌት|ወደ ቀድሞ ማውጫ ይመለሱ)$")
 
     pin_conv = ConversationHandler(
         entry_points=[CommandHandler("start", start)],
         states={
-            SET_PIN: [MessageHandler(filters.TEXT & ~filters.COMMAND, set_pin_handler)]
+            SET_PIN: [MessageHandler(filters.TEXT & ~filters.COMMAND & ~menu_button_filter, set_pin_handler)]
         },
-        fallbacks=[CommandHandler("cancel", cancel)],
+        fallbacks=[
+            CommandHandler("cancel", cancel),
+            MessageHandler(menu_button_filter, cancel)
+        ],
         per_user=True
     )
 
@@ -631,23 +631,29 @@ def main():
         entry_points=[MessageHandler(filters.Regex("^🎟 ትኬት ይቁረጡ$"), start_buy_ticket)],
         states={
             DEPOSIT_METHOD: [CallbackQueryHandler(deposit_method_selected, pattern="^dep_")],
-            DEPOSIT_AMOUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, deposit_amount_received)],
-            DEPOSIT_PHONE: [MessageHandler(filters.TEXT & ~filters.COMMAND, deposit_phone_received)],
-            DEPOSIT_REF_CODE: [MessageHandler(filters.TEXT & ~filters.COMMAND, deposit_ref_code_received)],
-            DEPOSIT_PROOF: [MessageHandler((filters.TEXT | filters.PHOTO) & ~filters.COMMAND, deposit_proof_received)]
+            DEPOSIT_AMOUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND & ~menu_button_filter, deposit_amount_received)],
+            DEPOSIT_PHONE: [MessageHandler(filters.TEXT & ~filters.COMMAND & ~menu_button_filter, deposit_phone_received)],
+            DEPOSIT_REF_CODE: [MessageHandler(filters.TEXT & ~filters.COMMAND & ~menu_button_filter, deposit_ref_code_received)],
+            DEPOSIT_PROOF: [MessageHandler((filters.TEXT | filters.PHOTO) & ~filters.COMMAND & ~menu_button_filter, deposit_proof_received)]
         },
-        fallbacks=[CommandHandler("cancel", cancel)],
+        fallbacks=[
+            CommandHandler("cancel", cancel),
+            MessageHandler(menu_button_filter, cancel)
+        ],
         per_user=True
     )
 
     transfer_conv = ConversationHandler(
         entry_points=[MessageHandler(filters.Regex("^🔄 ገንዘብ ይላኩ$"), start_transfer)],
         states={
-            TRANSFER_TARGET_ID: [MessageHandler(filters.TEXT & ~filters.COMMAND, transfer_target_received)],
-            TRANSFER_AMOUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, transfer_amount_received)],
-            TRANSFER_PIN: [MessageHandler(filters.TEXT & ~filters.COMMAND, transfer_pin_received)]
+            TRANSFER_TARGET_ID: [MessageHandler(filters.TEXT & ~filters.COMMAND & ~menu_button_filter, transfer_target_received)],
+            TRANSFER_AMOUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND & ~menu_button_filter, transfer_amount_received)],
+            TRANSFER_PIN: [MessageHandler(filters.TEXT & ~filters.COMMAND & ~menu_button_filter, transfer_pin_received)]
         },
-        fallbacks=[CommandHandler("cancel", cancel)],
+        fallbacks=[
+            CommandHandler("cancel", cancel),
+            MessageHandler(menu_button_filter, cancel)
+        ],
         per_user=True
     )
 
@@ -655,11 +661,14 @@ def main():
         entry_points=[MessageHandler(filters.Regex("^💸 ገንዘብ ያውጡ$"), start_withdraw)],
         states={
             WITHDRAW_METHOD: [CallbackQueryHandler(withdraw_method_selected, pattern="^with_")],
-            WITHDRAW_ACCOUNT_INFO: [MessageHandler(filters.TEXT & ~filters.COMMAND, withdraw_account_received)],
-            WITHDRAW_AMOUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, withdraw_amount_received)],
-            WITHDRAW_PIN: [MessageHandler(filters.TEXT & ~filters.COMMAND, withdraw_pin_received)]
+            WITHDRAW_ACCOUNT_INFO: [MessageHandler(filters.TEXT & ~filters.COMMAND & ~menu_button_filter, withdraw_account_received)],
+            WITHDRAW_AMOUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND & ~menu_button_filter, withdraw_amount_received)],
+            WITHDRAW_PIN: [MessageHandler(filters.TEXT & ~filters.COMMAND & ~menu_button_filter, withdraw_pin_received)]
         },
-        fallbacks=[CommandHandler("cancel", cancel)],
+        fallbacks=[
+            CommandHandler("cancel", cancel),
+            MessageHandler(menu_button_filter, cancel)
+        ],
         per_user=True
     )
 
@@ -670,7 +679,7 @@ def main():
 
     app.add_handler(MessageHandler(filters.Regex("^🎁 የሽልማት ዝርዝር$"), show_rewards))
     app.add_handler(MessageHandler(filters.Regex("^💼 የኔ ዋሌት$"), show_wallet))
-    app.add_handler(MessageHandler(filters.Regex("^ወደ ቀድሞ ማውጫ ይመለሱ$"), start))
+    app.add_handler(MessageHandler(filters.Regex("^(ወደ ቀድሞ ማውጫ ይመለሱ|/start)$"), start))
     app.add_handler(CommandHandler("stats", admin_stats))
 
     logging.info("ቦቱ መስራት ጀምሯል...")
