@@ -3,8 +3,9 @@ import logging
 import json
 import random
 import re
+import asyncio
 import uvicorn
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 import threading
 from PIL import Image
 import pytesseract
@@ -46,6 +47,19 @@ TRANSFER_RECIPIENT, TRANSFER_AMOUNT, TRANSFER_PIN = range(6, 9)
 SET_PIN_STATE = range(9, 10)
 
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
+
+# -------------------------------------------------------------
+# FASTAPI / WEB SERVER FOR RENDER HEALTH CHECK
+# -------------------------------------------------------------
+web_app = FastAPI()
+
+@web_app.get("/")
+def read_root():
+    return {"status": "bot is running"}
+
+def run_web_server():
+    port = int(os.environ.get("PORT", 8080))
+    uvicorn.run(web_app, host="0.0.0.0", port=port)
 
 # -------------------------------------------------------------
 # DATABASE FUNCTIONS
@@ -241,9 +255,18 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("እንኳን ወደ **ህዳሴ ሎተሪ** በደህና መጡ! 🎟️", parse_mode="Markdown", reply_markup=get_main_menu_keyboard(user_id))
 
 # -------------------------------------------------------------
-# MAIN APP setup
+# ERROR HANDLER
+# -------------------------------------------------------------
+async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    logging.error(f"Exception while handling an update: {context.error}")
+
+# -------------------------------------------------------------
+# MAIN APP SETUP
 # -------------------------------------------------------------
 def main():
+    # FastAPI ሰርቨሩን በጀርባ (Background Thread) ማስጀመር
+    threading.Thread(target=run_web_server, daemon=True).start()
+
     app = Application.builder().token(BOT_TOKEN).build()
 
     # 1. Deposit Conversation Handler
@@ -278,6 +301,9 @@ def main():
     app.add_handler(dep_conv)
     app.add_handler(pin_conv)
     app.add_handler(CallbackQueryHandler(button_handler))
+
+    # Error handler መመዝገብ
+    app.add_error_handler(error_handler)
 
     app.run_polling(drop_pending_updates=True)
 
