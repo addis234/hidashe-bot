@@ -1,7 +1,10 @@
 FROM python:3.10-slim
 
-# Tesseract OCR እና አስፈላጊ ፓኬጆችን መጫን
+# Pillow እና Tesseract የሚያስፈልጋቸውን የሲስተም ላይብረሪዎች መጫን
 RUN apt-get update && apt-get install -y \
+    build-essential \
+    libjpeg-dev \
+    zlib1g-dev \
     tesseract-ocr \
     libtesseract-dev \
     && rm -rf /var/lib/apt-get/lists/*
