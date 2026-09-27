@@ -152,12 +152,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     first_name = update.effective_user.first_name or "ተጠቃሚ"
     
+    # ትኬት ሳይቆርጥ የሪፈራል ኮድ አይሰጠውም (ref_code = None)
     if user_id not in users_db:
         users_db[user_id] = {
             'first_name': first_name,
             'wallet_balance': 0,
             'pin': None,
-            'ref_code': generate_ref_code(user_id),
+            'ref_code': None,
             'tickets': [],
             'referred_count': 0,
             'phone': None
@@ -207,15 +208,17 @@ async def show_wallet(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     user_data = users_db.get(user_id, {})
     balance = user_data.get('wallet_balance', 0)
-    ref_code = user_data.get('ref_code', generate_ref_code(user_id))
+    ref_code = user_data.get('ref_code')
     tickets = len(user_data.get('tickets', []))
+
+    ref_display = f"`{ref_code}`" if ref_code else "⚠️ ትኬት ሲቆርጡ የሚሰጥዎት ይሆናል"
 
     msg = (
         f"💼 **የእርስዎ አካውንት መረጃ**\n\n"
         f"🆔 **የእርስዎ ID፦** `{user_id}`\n"
         f"💰 **የዋሌት መጠን፦** {balance} ETB\n"
         f"🎟 **የቆረጡት ትኬት ብዛት፦** {tickets}\n"
-        f"🔗 **የእርስዎ ሪፈራል ኮድ፦** `{ref_code}`"
+        f"🔗 **የእርስዎ ሪፈራል ኮድ፦** {ref_display}"
     )
     await update.message.reply_text(msg, parse_mode="Markdown")
     return ConversationHandler.END
@@ -316,6 +319,12 @@ async def deposit_proof_received(update: Update, context: ContextTypes.DEFAULT_T
     users_db[user_id]['phone'] = phone
     users_db[user_id].setdefault('tickets', []).append(ticket_no)
 
+    # ትኬት ሲቆርጥ የሪፈራል ኮድ ከሌለው አዲስ የሪፈራል ኮድ ይመደብለታል
+    if not users_db[user_id].get('ref_code'):
+        users_db[user_id]['ref_code'] = generate_ref_code(user_id)
+
+    my_ref_code = users_db[user_id]['ref_code']
+
     ref_owner_id = None
     if used_ref_code:
         for uid, udata in users_db.items():
@@ -334,12 +343,10 @@ async def deposit_proof_received(update: Update, context: ContextTypes.DEFAULT_T
 
     save_db()
 
-    my_ref_code = users_db[user_id].get('ref_code')
-
     await update.message.reply_text(
         f"🎉 **ክፍያዎ ተረጋግጦ ትኬትዎ ተቆርጧል!**\n\n"
         f"🎟 **የእጣ ቁጥር፦** `{ticket_no}`\n"
-        f"🔗 **የእርስዎ ሪፈራል ኮድ፦** `{my_ref_code}`\n\n"
+        f"🔗 **የእርስዎ አዲሱ ሪፈራል ኮድ፦** `{my_ref_code}`\n\n"
         f"✨ **መልካም እድል!**",
         parse_mode="Markdown",
         reply_markup=get_main_keyboard()
@@ -562,7 +569,7 @@ async def post_channel_updates(context: ContextTypes.DEFAULT_TYPE):
         msg += "\n".join(ticket_buyers[:10]) + "\n\n"
 
     msg += (
-        "💡 እርስዎም የሪፈራል ኮድዎን በማጋራት በ 1 ሰው 10 ETB መስራት ይችላሉ!\n"
+        "💡 እርስዎም ትኬት በመቁረጥ የሪፈራል ኮድዎን በማጋራት በ 1 ሰው 10 ETB መስራት ይችላሉ!\n"
         "📺 የሎተሪ አወጣጥ ሂደቱ በቅርቡ በቻናላችን ላይቭ (Live) ይተላለፋል!"
     )
 
@@ -612,7 +619,6 @@ def main():
     if app.job_queue:
         app.job_queue.run_repeating(post_channel_updates, interval=10800, first=10)
 
-    # አዝራሮች/Buttons ከውይይት እንዲያስወጡ የሚያደርግ Fallback Filter
     menu_button_filter = filters.Regex("^(🎟 ትኬት ይቁረጡ|💸 ገንዘብ ያውጡ|🔄 ገንዘብ ይላኩ|🎁 የሽልማት ዝርዝር|💼 የኔ ዋሌት|ወደ ቀድሞ ማውጫ ይመለሱ)$")
 
     pin_conv = ConversationHandler(
