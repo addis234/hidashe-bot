@@ -2,10 +2,8 @@ import os
 import logging
 import json
 import re
-import asyncio
 import threading
-from PIL import Image
-import pytesseract
+from typing import Tuple
 
 import uvicorn
 from fastapi import FastAPI
@@ -15,16 +13,24 @@ from telegram.ext import (
     ContextTypes, ConversationHandler, filters
 )
 
+# OCR በሰርቨሩ ላይ መኖር አለመኖሩን መፈተሽ
+try:
+    from PIL import Image
+    import pytesseract
+    OCR_AVAILABLE = True
+except Exception:
+    OCR_AVAILABLE = False
+
 # -------------------------------------------------------------
-# CONFIGURATIONS
+# CONFIGURATIONS & ENVIRONMENT VARIABLES
 # -------------------------------------------------------------
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 if not BOT_TOKEN:
-    raise ValueError("CRITICAL ERROR: 'BOT_TOKEN' environment variable is not set.")
+    # ለሙከራ እንዲረዳ Render ላይ ባይኖርም እንዳይዘጋ ማድረግ
+    logging.warning("BOT_TOKEN is not set in Environment Variables!")
 
 ADMIN_ID = int(os.environ.get("ADMIN_ID", "6722504980"))
 
-# የባንክ እና የቴሌብር የተቀባይ ስሞች (ለመፈተሽ የሚያገለግሉ)
 MY_CBE_NAME = "Addis Alemayehu"
 MY_TELEBIRR_NAME = "Addis"
 
@@ -37,7 +43,20 @@ logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s
 db_lock = threading.Lock()
 
 # -------------------------------------------------------------
-# USED TRANSACTIONS DB (ተደጋጋሚ ደረሰኝ ለመከላከል)
+# FASTAPI FOR RENDER HEALTH CHECK
+# -------------------------------------------------------------
+web_app = FastAPI()
+
+@web_app.get("/")
+def read_root():
+    return {"status": "ok", "bot": "running"}
+
+def run_web_server():
+    port = int(os.environ.get("PORT", 8080))
+    uvicorn.run(web_app, host="0.0.0.0", port=port, log_level="warning")
+
+# -------------------------------------------------------------
+# DATABASE & TRANSACTIONS MANAGEMENT
 # -------------------------------------------------------------
 def load_used_txns() -> set:
     if os.path.exists(USED_TXNS_FILE):
@@ -59,9 +78,6 @@ def save_used_txn(txn_id: str):
 
 used_txns = load_used_txns()
 
-# -------------------------------------------------------------
-# DATABASE FUNCTIONS
-# -------------------------------------------------------------
 def load_db() -> dict:
     if os.path.exists(DB_FILE):
         try:
@@ -84,36 +100,26 @@ def save_db():
 users_db = load_db()
 
 # -------------------------------------------------------------
-# OCR & TEXT VERIFICATION LOGIC (አውቶማቲክ ማረጋገጫ)
+# VERIFICATION LOGIC (የተቀባይ ስም እና የብር መጠን ማረጋገጫ)
 # -------------------------------------------------------------
-def verify_receipt_text(text: str, expected_amount: int, method: str) -> tuple[bool, str]:
-    """
-    ደረሰኙን አምቦ የተቀባይ ስም፣ የብር መጠን እና የትራንዛክሽን ቁጥር ያረጋግጣል
-    """
+def verify_receipt_text(text: str, expected_amount: int, method: str) -> Tuple[bool, str]:
     clean_text = text.lower()
 
-    # 1. የተቀባይ ስም ማረጋገጥ (Receiver Name Check)
-    expected_name = MY_CBE_NAME.lower() if method == "CBE" else MY_TELEBIRR_NAME.lower()
-    
-    # "addis alemayehu" ወይም "addis" በፅሁፉ/በምስሉ ውስጥ መኖር አለበት
+    # 1. የተቀባይ ስም መኖሩን ማረጋገጥ
     if "addis" not in clean_text:
         return False, f"❌ በደረሰኙ ላይ የተቀባይ ስም ({MY_CBE_NAME} / {MY_TELEBIRR_NAME}) አልተገኘም።"
 
-    # 2. የብር መጠን ማረጋገጥ (Amount Check)
-    # በጽሁፉ ውስጥ የተጠየቀው የብር መጠን መኖሩን መፈለግ
+    # 2. የብር መጠኑ እኩል መሆኑን ማረጋገጥ
     amount_pattern = rf"\b{expected_amount}(\.00)?\b"
     if not re.search(amount_pattern, text):
         return False, f"❌ በደረሰኙ ላይ የተገለጸው የብር መጠን ከጠየቁት ({expected_amount} ETB) ጋር አይጣጣምም።"
 
-    # 3. የትራንዛክሽን ቁጥር መፈለግና መደጋገሙን ማረጋገጥ (Txn ID Check)
-    # የቴሌብር ወይም CBE የትራንዛክሽን ቁጥሮችን በRegex መፈለግ (ምሳሌ፦ DIR16I1C7R, FT2309...)
+    # 3. የትራንዛክሽን ቁጥር መደጋገሙን መፈተሽ
     txn_match = re.search(r'\b([A-Za-z0-9]{8,12})\b', text)
     if txn_match:
         txn_id = txn_match.group(1).upper()
         if txn_id in used_txns:
             return False, "❌ ይህ የትራንዛክሽን ቁጥር/ደረሰኝ ቀደም ብሎ ጥቅም ላይ ውሏል!"
-        
-        # አዲስ ከሆነ የትራንዛክሽን ቁጥሩን መዝግቦ መያዝ
         save_used_txn(txn_id)
 
     return True, "✅ ማረጋገጫው ተሳክቷል!"
@@ -128,21 +134,22 @@ async def deposit_proof_received(update: Update, context: ContextTypes.DEFAULT_T
 
     extracted_text = ""
 
-    # ሀ. ተጠቃሚው የላከው የደረሰኝ PHOTO ከሆነ በOCR ማንበብ
     if update.message.photo:
-        await update.message.reply_text("🔍 ደረሰኝዎ በመመርመር ላይ ነው... እባክዎን ትንሽ ይታገሱ።")
-        
+        if not OCR_AVAILABLE:
+            await update.message.reply_text("⚠️ በምስል ማረጋገጥ በጊዜያዊነት አይሰራም። እባክዎን የባንክ ወይም የቴሌብር SMS ጽሁፉን ኮፒ አድርገው ይላኩ።")
+            return DEPOSIT_PROOF
+
+        await update.message.reply_text("🔍 ደረሰኝዎ በመመርመር ላይ ነው...")
         photo_file = await update.message.photo[-1].get_file()
         photo_path = f"temp_{user_id}.jpg"
         await photo_file.download_to_drive(photo_path)
 
         try:
-            # በTesseract ምስሉን ወደ ጽሁፍ መቀየር
             image = Image.open(photo_path)
             extracted_text = pytesseract.image_to_string(image)
         except Exception as e:
             logging.error(f"OCR Error: {e}")
-            await update.message.reply_text("⚠️ የደረሰኙን ጽሁፍ ማነብ አልተቻለም። እባክዎን ጥራት ያለው ፎቶ ወይም የባንኩን SMS በጽሁፍ ይላኩ።")
+            await update.message.reply_text("⚠️ ደረሰኙን ማንበብ አልተቻለም። እባክዎን የትራንዛክሽን SMS ጽሁፉን ይላኩ።")
             if os.path.exists(photo_path):
                 os.remove(photo_path)
             return DEPOSIT_PROOF
@@ -150,28 +157,51 @@ async def deposit_proof_received(update: Update, context: ContextTypes.DEFAULT_T
         if os.path.exists(photo_path):
             os.remove(photo_path)
 
-    # ለ. ተጠቃሚው የላከው የSMS ጽሁፍ ከሆነ
     elif update.message.text:
         extracted_text = update.message.text
 
-    # ሐ. ደረሰኙን ማረጋገጥ (Verification Logic)
     is_valid, message = verify_receipt_text(extracted_text, expected_amount, method)
 
     if is_valid:
-        # ክፍያውን ማጽደቅና ሂሳብ ላይ መጨመር
+        if user_id not in users_db:
+            users_db[user_id] = {'wallet_balance': 0}
         users_db[user_id]['wallet_balance'] += expected_amount
         save_db()
 
-        success_msg = (
+        await update.message.reply_text(
             f"🎉 **ክፍያዎ ተረጋግጦ ጸድቋል!**\n\n"
             f"💵 **የተጨመረበት ሂሳብ፦** {expected_amount} ETB\n"
-            f"💰 **አጠቃላይ የዋሌት ሂሳብዎ፦** {users_db[user_id]['wallet_balance']} ETB"
+            f"💰 **አጠቃላይ ዋሌትዎ፦** {users_db[user_id]['wallet_balance']} ETB",
+            parse_mode="Markdown"
         )
-        await update.message.reply_text(success_msg, parse_mode="Markdown")
         return ConversationHandler.END
     else:
-        # ክፍያው ውድቅ ከሆነ ምክንያት መንገር
-        await update.message.reply_text(
-            f"{message}\n\nእባክዎን ትክክለኛውን የትራንዛክሽን SMS ወይም ደረሰኝ እንደገና ይላኩ፦"
-        )
+        await update.message.reply_text(f"{message}\n\nእባክዎን ትክክለኛውን ደረሰኝ/SMS እንደገና ይላኩ፦")
         return DEPOSIT_PROOF
+
+# -------------------------------------------------------------
+# MAIN APP SETUP
+# -------------------------------------------------------------
+def main():
+    threading.Thread(target=run_web_server, daemon=True).start()
+
+    if not BOT_TOKEN:
+        logging.error("BOT_TOKEN አልተዘጋጀም! እባክዎን በ Render Environment Variables ውስጥ ያስገቡ።")
+        return
+
+    app = Application.builder().token(BOT_TOKEN).build()
+
+    dep_conv = ConversationHandler(
+        entry_points=[CallbackQueryHandler(lambda u, c: DEPOSIT_METHOD, pattern="^start_deposit$")],
+        states={
+            DEPOSIT_PROOF: [MessageHandler((filters.TEXT | filters.PHOTO) & ~filters.COMMAND, deposit_proof_received)]
+        },
+        fallbacks=[],
+        per_user=True
+    )
+
+    app.add_handler(dep_conv)
+    app.run_polling(drop_pending_updates=True)
+
+if __name__ == "__main__":
+    main()
