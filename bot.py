@@ -1,11 +1,11 @@
 import os
 import logging
 import json
-import random
 import re
 import asyncio
 import threading
-from typing import Optional
+from PIL import Image
+import pytesseract
 
 import uvicorn
 from fastapi import FastAPI
@@ -15,86 +15,59 @@ from telegram.ext import (
     ContextTypes, ConversationHandler, filters
 )
 
-# የኦሲአር ፋይሎች ካልተጫኑ ቦቱ እንዳይዘጋ በደህንነት ማስተካከል
-try:
-    from PIL import Image
-    import pytesseract
-    OCR_AVAILABLE = True
-except ImportError:
-    OCR_AVAILABLE = False
-
 # -------------------------------------------------------------
-# CONFIGURATIONS & ENVIRONMENT VARIABLES
+# CONFIGURATIONS
 # -------------------------------------------------------------
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 if not BOT_TOKEN:
     raise ValueError("CRITICAL ERROR: 'BOT_TOKEN' environment variable is not set.")
 
 ADMIN_ID = int(os.environ.get("ADMIN_ID", "6722504980"))
-CHANNEL_USERNAME = os.environ.get("CHANNEL_USERNAME", "@YourChannelUsername")
 
-TICKET_PRICE = 50
-REFERRAL_BONUS = 10
-MIN_WITHDRAW_AMOUNT = 500
-WITHDRAW_FEE = 10
-TRANSFER_FEE = 1
-REQUIRED_REFERRALS = 10
-
-MY_CBE_ACCOUNT_FULL = os.environ.get("CBE_ACCOUNT", "1000723732108")
-MY_CBE_NAME = os.environ.get("CBE_NAME", "Addis Alemayehu")
-MY_TELEBIRR_PHONE = os.environ.get("TELEBIRR_PHONE", "0981212774")
-MY_TELEBIRR_NAME = os.environ.get("TELEBIRR_NAME", "Addis")
-
-PRIZES = ["🏆 የሎተሪው ዋና እጣ፦ Core i7 11th Generation Laptop 💻"]
+# የባንክ እና የቴሌብር የተቀባይ ስሞች (ለመፈተሽ የሚያገለግሉ)
+MY_CBE_NAME = "Addis Alemayehu"
+MY_TELEBIRR_NAME = "Addis"
 
 DB_FILE = "users_db.json"
 USED_TXNS_FILE = "used_txns.json"
 
-# CONVERSATION STATES
 DEPOSIT_METHOD, DEPOSIT_AMOUNT, DEPOSIT_PROOF = range(3)
-WITHDRAW_AMOUNT, WITHDRAW_DETAILS = range(3, 5)
-BUY_TICKET_QTY = range(5, 6)
-TRANSFER_RECIPIENT, TRANSFER_AMOUNT, TRANSFER_PIN = range(6, 9)
-SET_PIN_STATE = range(9, 10)
 
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
-)
-
+logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 db_lock = threading.Lock()
 
 # -------------------------------------------------------------
-# FASTAPI / WEB SERVER FOR RENDER HEALTH CHECK
+# USED TRANSACTIONS DB (ተደጋጋሚ ደረሰኝ ለመከላከል)
 # -------------------------------------------------------------
-web_app = FastAPI()
+def load_used_txns() -> set:
+    if os.path.exists(USED_TXNS_FILE):
+        try:
+            with open(USED_TXNS_FILE, "r", encoding="utf-8") as f:
+                return set(json.load(f))
+        except Exception:
+            return set()
+    return set()
 
-@web_app.get("/")
-def read_root():
-    return {"status": "ok", "bot": "running"}
+def save_used_txn(txn_id: str):
+    used_txns.add(txn_id)
+    with db_lock:
+        try:
+            with open(USED_TXNS_FILE, "w", encoding="utf-8") as f:
+                json.dump(list(used_txns), f)
+        except Exception as e:
+            logging.error(f"Error saving txns: {e}")
 
-def run_web_server():
-    port = int(os.environ.get("PORT", 8080))
-    uvicorn.run(web_app, host="0.0.0.0", port=port, log_level="warning")
+used_txns = load_used_txns()
 
 # -------------------------------------------------------------
-# DATABASE FUNCTIONS (Thread-Safe)
+# DATABASE FUNCTIONS
 # -------------------------------------------------------------
 def load_db() -> dict:
     if os.path.exists(DB_FILE):
         try:
             with open(DB_FILE, "r", encoding="utf-8") as f:
                 data = json.load(f)
-            db = {int(k): v for k, v in data.items()}
-            for u in db.values():
-                u.setdefault('wallet_balance', 0)
-                u.setdefault('ref_balance', 0)
-                u.setdefault('tickets', 0)
-                u.setdefault('ticket_numbers', [])
-                u.setdefault('phone', None)
-                u.setdefault('referred_count', 0)
-                u.setdefault('pin', "1234")
-            return db
+            return {int(k): v for k, v in data.items()}
         except Exception as e:
             logging.error(f"Error loading DB: {e}")
             return {}
@@ -110,227 +83,95 @@ def save_db():
 
 users_db = load_db()
 
-def ensure_admin_exists():
-    if ADMIN_ID not in users_db:
-        users_db[ADMIN_ID] = {
-            'wallet_balance': 0, 'ref_balance': 0, 'tickets': 0, 'referrer': None,
-            'username': "Admin", 'full_name': "System Admin", 'phone': None,
-            'ticket_numbers': [], 'referred_count': 0, 'pin': "1234"
-        }
-        save_db()
-
-ensure_admin_exists()
-
 # -------------------------------------------------------------
-# KEYBOARDS
+# OCR & TEXT VERIFICATION LOGIC (አውቶማቲክ ማረጋገጫ)
 # -------------------------------------------------------------
-def get_main_menu_keyboard(user_id: int) -> InlineKeyboardMarkup:
-    user = users_db.get(user_id, {})
-    balance = user.get('wallet_balance', 0)
-    ref_bal = user.get('ref_balance', 0)
-    keyboard = [
-        [InlineKeyboardButton(f"💳 የኔ አካውንት (Wallet: {balance} ETB | Ref: {ref_bal} ETB)", callback_data="my_account")],
-        [InlineKeyboardButton("📥 ገንዘብ አስገባ (Deposit)", callback_data="start_deposit"), InlineKeyboardButton("📤 ገንዘብ አውጣ (Withdraw)", callback_data="start_withdraw")],
-        [InlineKeyboardButton("🔄 ገንዘብ ላክ (Transfer)", callback_data="start_transfer"), InlineKeyboardButton("🎟️ ቲኬት ቁረጥ", callback_data="start_buy_ticket")],
-        [InlineKeyboardButton("🎁 የሽልማት ዝርዝር", callback_data="show_prizes"), InlineKeyboardButton("👥 የሪፈራል ሊንክ", callback_data="get_referral")],
-        [InlineKeyboardButton("🔑 PIN ቁጥር ቀይር", callback_data="set_pin")]
-    ]
-    return InlineKeyboardMarkup(keyboard)
+def verify_receipt_text(text: str, expected_amount: int, method: str) -> tuple[bool, str]:
+    """
+    ደረሰኙን አምቦ የተቀባይ ስም፣ የብር መጠን እና የትራንዛክሽን ቁጥር ያረጋግጣል
+    """
+    clean_text = text.lower()
 
-def get_back_keyboard() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup([[InlineKeyboardButton("🔙 ወደ ዋናው ማውጫ", callback_data="main_menu")]])
-
-# -------------------------------------------------------------
-# CANCEL / FALLBACK HANDLER
-# -------------------------------------------------------------
-async def cancel_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    user_id = update.effective_user.id
-    if query:
-        await query.answer()
-        await query.edit_message_text("ለወጡበት ተግባር ሰርዘዋል። ወደ ዋናው ማውጫ ተመልሰዋል፦", reply_markup=get_main_menu_keyboard(user_id))
-    else:
-        await update.message.reply_text("ወደ ዋናው ማውጫ ተመልሰዋል፦", reply_markup=get_main_menu_keyboard(user_id))
-    return ConversationHandler.END
-
-# -------------------------------------------------------------
-# DEPOSIT HANDLERS
-# -------------------------------------------------------------
-async def start_deposit(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    keyboard = [
-        [InlineKeyboardButton("🏦 Commercial Bank (CBE)", callback_data="dep_cbe")],
-        [InlineKeyboardButton("📲 Telebirr", callback_data="dep_telebirr")],
-        [InlineKeyboardButton("❌ ሰርዝ", callback_data="cancel_action")]
-    ]
-    await query.edit_message_text("📥 **ገንዘብ ማስገቢያ መንገድ ይምረጡ፦**", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
-    return DEPOSIT_METHOD
-
-async def deposit_method_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    method = "CBE" if query.data == "dep_cbe" else "Telebirr"
-    context.user_data['dep_method'] = method
-
-    if method == "Telebirr":
-        msg = f"📌 **የተመረጠው፦ Telebirr**\nየቴሌብር ቁጥር፦ `{MY_TELEBIRR_PHONE}` ({MY_TELEBIRR_NAME})\n\n💵 **ወደ አካውንትዎ ማስገባት የሚፈልጉትን የብር መጠን ያስገቡ፦**"
-    else:
-        msg = f"📌 **የተመረጠው፦ CBE**\nየሂሳብ ቁጥር፦ `{MY_CBE_ACCOUNT_FULL}` ({MY_CBE_NAME})\n\n💵 **ወደ አካውንትዎ ማስገባት የሚፈልጉትን የብር መጠን ያስገቡ፦**"
+    # 1. የተቀባይ ስም ማረጋገጥ (Receiver Name Check)
+    expected_name = MY_CBE_NAME.lower() if method == "CBE" else MY_TELEBIRR_NAME.lower()
     
-    await query.edit_message_text(msg, parse_mode="Markdown")
-    return DEPOSIT_AMOUNT
+    # "addis alemayehu" ወይም "addis" በፅሁፉ/በምስሉ ውስጥ መኖር አለበት
+    if "addis" not in clean_text:
+        return False, f"❌ በደረሰኙ ላይ የተቀባይ ስም ({MY_CBE_NAME} / {MY_TELEBIRR_NAME}) አልተገኘም።"
 
-async def deposit_amount_entered(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text
-    if not text or not text.isdigit() or int(text) < 10:
-        await update.message.reply_text("⚠️ እባክዎን ትክክለኛ የብር መጠን ያስገቡ (ቢያንስ 10 ETB)፦")
-        return DEPOSIT_AMOUNT
-    
-    amount = int(text)
-    context.user_data['dep_amount'] = amount
-    method = context.user_data.get('dep_method', 'Telebirr')
+    # 2. የብር መጠን ማረጋገጥ (Amount Check)
+    # በጽሁፉ ውስጥ የተጠየቀው የብር መጠን መኖሩን መፈለግ
+    amount_pattern = rf"\b{expected_amount}(\.00)?\b"
+    if not re.search(amount_pattern, text):
+        return False, f"❌ በደረሰኙ ላይ የተገለጸው የብር መጠን ከጠየቁት ({expected_amount} ETB) ጋር አይጣጣምም።"
 
-    acc_info = f"`{MY_TELEBIRR_PHONE}` ({MY_TELEBIRR_NAME})" if method == "Telebirr" else f"`{MY_CBE_ACCOUNT_FULL}` ({MY_CBE_NAME})"
-    msg = (
-        f"💰 **የሚያስገቡት መጠን፦ {amount} ETB**\n\n"
-        f"እባክዎን ክፍያውን ወደዚህ ሂሳብ ይላኩ፦ {acc_info}\n\n"
-        f"🔐 **ክፍያውን ከፈጸሙ በኋላ የወጣውን የትራንዛክሽን ቁጥር/SMS በጽሁፍ ወይም የደረሰኙን photo ይላኩ፦**"
-    )
-    await update.message.reply_text(msg, parse_mode="Markdown")
-    return DEPOSIT_PROOF
+    # 3. የትራንዛክሽን ቁጥር መፈለግና መደጋገሙን ማረጋገጥ (Txn ID Check)
+    # የቴሌብር ወይም CBE የትራንዛክሽን ቁጥሮችን በRegex መፈለግ (ምሳሌ፦ DIR16I1C7R, FT2309...)
+    txn_match = re.search(r'\b([A-Za-z0-9]{8,12})\b', text)
+    if txn_match:
+        txn_id = txn_match.group(1).upper()
+        if txn_id in used_txns:
+            return False, "❌ ይህ የትራንዛክሽን ቁጥር/ደረሰኝ ቀደም ብሎ ጥቅም ላይ ውሏል!"
+        
+        # አዲስ ከሆነ የትራንዛክሽን ቁጥሩን መዝግቦ መያዝ
+        save_used_txn(txn_id)
 
+    return True, "✅ ማረጋገጫው ተሳክቷል!"
+
+# -------------------------------------------------------------
+# DEPOSIT PROOF HANDLER
+# -------------------------------------------------------------
 async def deposit_proof_received(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     expected_amount = context.user_data.get('dep_amount', 0)
-    
-    users_db[user_id]['wallet_balance'] += expected_amount
-    save_db()
+    method = context.user_data.get('dep_method', 'CBE')
 
-    msg = (
-        f"🎉 **ዲፖዚትዎ ተሳክቷል!**\n\n"
-        f"💵 **የተጨመረበት ሂሳብ፦** {expected_amount} ETB\n"
-        f"💰 **አጠቃላይ የዋሌት ሂሳብዎ፦** {users_db[user_id]['wallet_balance']} ETB"
-    )
-    await update.message.reply_text(msg, parse_mode="Markdown", reply_markup=get_main_menu_keyboard(user_id))
-    return ConversationHandler.END
+    extracted_text = ""
 
-# -------------------------------------------------------------
-# PIN HANDLERS
-# -------------------------------------------------------------
-async def start_set_pin(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    await query.edit_message_text("🔑 **አዲስ ባለ 4 አሃዝ የሚስጥር ቁጥር (PIN) ያስገቡ፦**", parse_mode="Markdown")
-    return SET_PIN_STATE
+    # ሀ. ተጠቃሚው የላከው የደረሰኝ PHOTO ከሆነ በOCR ማንበብ
+    if update.message.photo:
+        await update.message.reply_text("🔍 ደረሰኝዎ በመመርመር ላይ ነው... እባክዎን ትንሽ ይታገሱ።")
+        
+        photo_file = await update.message.photo[-1].get_file()
+        photo_path = f"temp_{user_id}.jpg"
+        await photo_file.download_to_drive(photo_path)
 
-async def save_pin_entered(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    text = update.message.text
-    
-    if not text or not text.isdigit() or len(text) != 4:
-        await update.message.reply_text("⚠️ እባክዎን ትክክለኛ ባለ 4 አሃዝ ቁጥር ያስገቡ፦")
-        return SET_PIN_STATE
+        try:
+            # በTesseract ምስሉን ወደ ጽሁፍ መቀየር
+            image = Image.open(photo_path)
+            extracted_text = pytesseract.image_to_string(image)
+        except Exception as e:
+            logging.error(f"OCR Error: {e}")
+            await update.message.reply_text("⚠️ የደረሰኙን ጽሁፍ ማነብ አልተቻለም። እባክዎን ጥራት ያለው ፎቶ ወይም የባንኩን SMS በጽሁፍ ይላኩ።")
+            if os.path.exists(photo_path):
+                os.remove(photo_path)
+            return DEPOSIT_PROOF
 
-    users_db[user_id]['pin'] = text
-    save_db()
-    await update.message.reply_text("✅ **የሚስጥር ቁጥርዎ (PIN) በስኬት ተቀይሯል!**", reply_markup=get_main_menu_keyboard(user_id))
-    return ConversationHandler.END
+        if os.path.exists(photo_path):
+            os.remove(photo_path)
 
-# -------------------------------------------------------------
-# START & GENERAL CALLBACK HANDLERS
-# -------------------------------------------------------------
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    user_id = user.id
-    ensure_admin_exists()
+    # ለ. ተጠቃሚው የላከው የSMS ጽሁፍ ከሆነ
+    elif update.message.text:
+        extracted_text = update.message.text
 
-    if user_id not in users_db:
-        users_db[user_id] = {
-            'wallet_balance': 0, 'ref_balance': 0, 'tickets': 0, 'referrer': None,
-            'username': user.username or "", 'full_name': user.full_name or "", 'phone': None,
-            'ticket_numbers': [], 'referred_count': 0, 'pin': "1234"
-        }
+    # ሐ. ደረሰኙን ማረጋገጥ (Verification Logic)
+    is_valid, message = verify_receipt_text(extracted_text, expected_amount, method)
+
+    if is_valid:
+        # ክፍያውን ማጽደቅና ሂሳብ ላይ መጨመር
+        users_db[user_id]['wallet_balance'] += expected_amount
         save_db()
 
-    welcome_text = "እንኳን ወደ **ህዳሴ ሎተሪ** በደህና መጡ! 🎟️\n\nእባክዎን ከታች ካሉት አማራጮች ይመረጡ፦"
-    if update.message:
-        await update.message.reply_text(welcome_text, parse_mode="Markdown", reply_markup=get_main_menu_keyboard(user_id))
-    return ConversationHandler.END
-
-async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    user_id = query.from_user.id
-
-    if query.data == "my_account":
-        u = users_db.get(user_id, {})
-        msg = f"👤 **የእርስዎ አካውንት**\n\n🆔 ID: `{user_id}`\n💵 Wallet: **{u.get('wallet_balance', 0)} ETB**\n🎁 Ref Bonus: **{u.get('ref_balance', 0)} ETB**\n🔑 PIN: `{u.get('pin', '1234')}`"
-        await query.edit_message_text(msg, parse_mode="Markdown", reply_markup=get_back_keyboard())
-    elif query.data == "show_prizes":
-        prizes_fmt = "\n".join(PRIZES)
-        msg = f"🎁 **የሎተሪ ሽልማቶች ዝርዝር፦**\n\n{prizes_fmt}"
-        await query.edit_message_text(msg, parse_mode="Markdown", reply_markup=get_back_keyboard())
-    elif query.data == "get_referral":
-        bot_username = (await context.bot.get_me()).username
-        ref_link = f"https://t.me/{bot_username}?start={user_id}"
-        msg = f"👥 **የእርስዎ የሪፈራል ሊንክ፦**\n\n`{ref_link}`\n\nለእያንዳንዱ ጋበዙት ሰው **{REFERRAL_BONUS} ETB** ያገኛሉ!"
-        await query.edit_message_text(msg, parse_mode="Markdown", reply_markup=get_back_keyboard())
-    elif query.data == "main_menu":
-        await query.edit_message_text("እንኳን ወደ **ህዳሴ ሎተሪ** በደህና መጡ! 🎟️", parse_mode="Markdown", reply_markup=get_main_menu_keyboard(user_id))
-
-# -------------------------------------------------------------
-# ERROR HANDLER
-# -------------------------------------------------------------
-async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
-    logging.error(f"Exception while handling update: {context.error}", exc_info=context.error)
-
-# -------------------------------------------------------------
-# MAIN APP SETUP
-# -------------------------------------------------------------
-def main():
-    # Render/Hosting ላይ ጤናማነትን ማረጋገጫ (Health check)
-    threading.Thread(target=run_web_server, daemon=True).start()
-
-    app = Application.builder().token(BOT_TOKEN).build()
-
-    # 1. Deposit Conversation Handler
-    dep_conv = ConversationHandler(
-        entry_points=[CallbackQueryHandler(start_deposit, pattern="^start_deposit$")],
-        states={
-            DEPOSIT_METHOD: [CallbackQueryHandler(deposit_method_selected, pattern="^(dep_cbe|dep_telebirr)$")],
-            DEPOSIT_AMOUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, deposit_amount_entered)],
-            DEPOSIT_PROOF: [MessageHandler((filters.TEXT | filters.PHOTO) & ~filters.COMMAND, deposit_proof_received)]
-        },
-        fallbacks=[
-            CallbackQueryHandler(cancel_handler, pattern="^(cancel_action|main_menu)$"),
-            CommandHandler("start", start)
-        ],
-        per_user=True
-    )
-
-    # 2. PIN Conversation Handler
-    pin_conv = ConversationHandler(
-        entry_points=[CallbackQueryHandler(start_set_pin, pattern="^set_pin$")],
-        states={
-            SET_PIN_STATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, save_pin_entered)]
-        },
-        fallbacks=[
-            CallbackQueryHandler(cancel_handler, pattern="^(cancel_action|main_menu)$"),
-            CommandHandler("start", start)
-        ],
-        per_user=True
-    )
-
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(dep_conv)
-    app.add_handler(pin_conv)
-    app.add_handler(CallbackQueryHandler(button_handler))
-
-    app.add_error_handler(error_handler)
-
-    logging.info("ቦቱ መስራት ጀምሯል...")
-    app.run_polling(drop_pending_updates=True)
-
-if __name__ == "__main__":
-    main()
+        success_msg = (
+            f"🎉 **ክፍያዎ ተረጋግጦ ጸድቋል!**\n\n"
+            f"💵 **የተጨመረበት ሂሳብ፦** {expected_amount} ETB\n"
+            f"💰 **አጠቃላይ የዋሌት ሂሳብዎ፦** {users_db[user_id]['wallet_balance']} ETB"
+        )
+        await update.message.reply_text(success_msg, parse_mode="Markdown")
+        return ConversationHandler.END
+    else:
+        # ክፍያው ውድቅ ከሆነ ምክንያት መንገር
+        await update.message.reply_text(
+            f"{message}\n\nእባክዎን ትክክለኛውን የትራንዛክሽን SMS ወይም ደረሰኝ እንደገና ይላኩ፦"
+        )
+        return DEPOSIT_PROOF
