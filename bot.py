@@ -26,7 +26,6 @@ except Exception:
 # -------------------------------------------------------------
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 if not BOT_TOKEN:
-    # ለሙከራ እንዲረዳ Render ላይ ባይኖርም እንዳይዘጋ ማድረግ
     logging.warning("BOT_TOKEN is not set in Environment Variables!")
 
 ADMIN_ID = int(os.environ.get("ADMIN_ID", "6722504980"))
@@ -109,13 +108,14 @@ def verify_receipt_text(text: str, expected_amount: int, method: str) -> Tuple[b
     if "addis" not in clean_text:
         return False, f"❌ በደረሰኙ ላይ የተቀባይ ስም ({MY_CBE_NAME} / {MY_TELEBIRR_NAME}) አልተገኘም።"
 
-    # 2. የብር መጠኑ እኩል መሆኑን ማረጋገጥ
-    amount_pattern = rf"\b{expected_amount}(\.00)?\b"
+    # 2. የብር መጠኑ እኩል መሆኑን ማረጋገጥ (ኮማዎችን እና ነጥቦችን ያካተተ)
+    amount_str = f"{expected_amount:,}"
+    amount_pattern = rf"\b({expected_amount}|{amount_str})(\.00)?\b"
     if not re.search(amount_pattern, text):
         return False, f"❌ በደረሰኙ ላይ የተገለጸው የብር መጠን ከጠየቁት ({expected_amount} ETB) ጋር አይጣጣምም።"
 
-    # 3. የትራንዛክሽን ቁጥር መደጋገሙን መፈተሽ
-    txn_match = re.search(r'\b([A-Za-z0-9]{8,12})\b', text)
+    # 3. የትራንዛክሽን ቁጥር መደጋገሙን መፈተሽ (የCBE እና Telebirr Txn ID ቅርጸት)
+    txn_match = re.search(r'\b(FT[A-Za-z0-9]{8,10}|[A-Za-z0-9]{10,12})\b', text)
     if txn_match:
         txn_id = txn_match.group(1).upper()
         if txn_id in used_txns:
@@ -125,8 +125,57 @@ def verify_receipt_text(text: str, expected_amount: int, method: str) -> Tuple[b
     return True, "✅ ማረጋገጫው ተሳክቷል!"
 
 # -------------------------------------------------------------
-# DEPOSIT PROOF HANDLER
+# CONVERSATION HANDLERS
 # -------------------------------------------------------------
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    keyboard = [[InlineKeyboardButton("💳 ብር ገቢ ለማድረግ (Deposit)", callback_data="start_deposit")]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text("እንኳን ወደ ቦቱ በደህና መጡ! ለመቀጠል ከታች ያለውን ቁልፍ ይጫኑ፦", reply_markup=reply_markup)
+
+async def start_deposit(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    keyboard = [
+        [InlineKeyboardButton("CBE Birr / Bank", callback_data="dep_CBE")],
+        [InlineKeyboardButton("Telebirr", callback_data="dep_Telebirr")]
+    ]
+    await query.edit_message_text("እባክዎን የከፈሉበትን መንገድ ይምረጡ፦", reply_markup=InlineKeyboardMarkup(keyboard))
+    return DEPOSIT_METHOD
+
+async def deposit_method_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    method = query.data.replace("dep_", "")
+    context.user_data['dep_method'] = method
+    
+    await query.edit_message_text(f"የመረጡት መንገድ፦ **{method}**\n\nእባክዎን ማስገባት የሚፈልጉትን የብር መጠን በቁጥር ብቻ ያስገቡ (ምሳሌ፦ 500)፦", parse_mode="Markdown")
+    return DEPOSIT_AMOUNT
+
+async def deposit_amount_received(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.strip()
+    if not text.isdigit():
+        await update.message.reply_text("❌ እባክዎን ትክክለኛ የብር መጠን በቁጥር ብቻ ያስገቡ (ምሳሌ፦ 500)፦")
+        return DEPOSIT_AMOUNT
+
+    amount = int(text)
+    if amount < 10:
+        await update.message.reply_text("❌ አነስተኛው ገቢ የሚደረግ ብር 10 ETB ነው። እባክዎን እንደገና ያስገቡ፦")
+        return DEPOSIT_AMOUNT
+
+    context.user_data['dep_amount'] = amount
+    method = context.user_data.get('dep_method', 'CBE')
+    account_name = MY_CBE_NAME if method == "CBE" else MY_TELEBIRR_NAME
+
+    await update.message.reply_text(
+        f"ለማስገባት የጠየቁት መጠን፦ **{amount} ETB**\n"
+        f"የተቀባይ ስም፦ **{account_name}**\n\n"
+        f"እባክዎን ክፍያውን ፈጽመው የባንኩን/ቴሌብርን SMS ጽሁፍ ወይም ደረሰኝ (Photo) እዚህ ይላኩ፦",
+        parse_mode="Markdown"
+    )
+    return DEPOSIT_PROOF
+
 async def deposit_proof_received(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     expected_amount = context.user_data.get('dep_amount', 0)
@@ -179,6 +228,10 @@ async def deposit_proof_received(update: Update, context: ContextTypes.DEFAULT_T
         await update.message.reply_text(f"{message}\n\nእባክዎን ትክክለኛውን ደረሰኝ/SMS እንደገና ይላኩ፦")
         return DEPOSIT_PROOF
 
+async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("የገቢ ማድረግ ሂደቱ ተሰርዟል።")
+    return ConversationHandler.END
+
 # -------------------------------------------------------------
 # MAIN APP SETUP
 # -------------------------------------------------------------
@@ -192,15 +245,20 @@ def main():
     app = Application.builder().token(BOT_TOKEN).build()
 
     dep_conv = ConversationHandler(
-        entry_points=[CallbackQueryHandler(lambda u, c: DEPOSIT_METHOD, pattern="^start_deposit$")],
+        entry_points=[CallbackQueryHandler(start_deposit, pattern="^start_deposit$")],
         states={
+            DEPOSIT_METHOD: [CallbackQueryHandler(deposit_method_selected, pattern="^dep_")],
+            DEPOSIT_AMOUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, deposit_amount_received)],
             DEPOSIT_PROOF: [MessageHandler((filters.TEXT | filters.PHOTO) & ~filters.COMMAND, deposit_proof_received)]
         },
-        fallbacks=[],
+        fallbacks=[CommandHandler("cancel", cancel)],
         per_user=True
     )
 
+    app.add_handler(CommandHandler("start", start))
     app.add_handler(dep_conv)
+    
+    logging.info("ቦቱ መስራት ጀምሯል...")
     app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
