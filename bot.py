@@ -4,7 +4,6 @@ import json
 import re
 import threading
 import asyncio
-import signal
 from typing import Tuple
 
 import uvicorn
@@ -122,6 +121,8 @@ def verify_receipt_text(text: str, expected_amount: int, method: str) -> Tuple[b
         txn_id = txn_match.group(1).upper()
         if txn_id in used_txns:
             return False, "❌ ይህ የትራንዛክሽን ቁጥር/ደረሰኝ ቀደም ብሎ ጥቅም ላይ ውሏል!"
+        
+        # ደረሰኙ ሙሉ በሙሉ ሲረጋገጥ ብቻ ነው የሚመዘገበው
         save_used_txn(txn_id)
 
     return True, "✅ ማረጋገጫው ተሳክቷል!"
@@ -262,20 +263,9 @@ def main():
     app.add_handler(dep_conv)
     
     logging.info("ቦቱ መስራት ጀምሯል...")
-
-    try:
-        app.run_polling(drop_pending_updates=True, stop_signals=None)
-    except (KeyboardInterrupt, SystemExit):
-        logging.info("ቦቱ በመዘጋት ላይ ነው...")
-    finally:
-        try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                pending = asyncio.all_tasks(loop)
-                for task in pending:
-                    task.cancel()
-        except Exception as e:
-            logging.error(f"Cleanup error: {e}")
+    
+    # Render እና Python Telegram Bot የተረጋጋ አሰራር
+    app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
     main()
