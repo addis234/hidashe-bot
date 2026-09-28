@@ -16,7 +16,6 @@ from telegram.ext import (
     ContextTypes, ConversationHandler, filters
 )
 
-# OCR በሰርቨሩ ላይ መኖር አለመኖሩን መፈተሽ
 try:
     from PIL import Image
     import pytesseract
@@ -28,9 +27,6 @@ except Exception:
 # CONFIGURATIONS & ENVIRONMENT VARIABLES
 # -------------------------------------------------------------
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
-if not BOT_TOKEN:
-    logging.warning("BOT_TOKEN environment variable ውስጥ አልተዘጋጀም!")
-
 ADMIN_ID = int(os.environ.get("ADMIN_ID", "6722504980"))
 CHANNEL_USERNAME = "@hdase1221"
 
@@ -40,7 +36,6 @@ MY_TELEBIRR_NAME = "Addis"
 DB_FILE = "users_db.json"
 USED_TXNS_FILE = "used_txns.json"
 
-# CONVERSATION STATES
 (
     SET_PIN,
     DEPOSIT_METHOD, DEPOSIT_AMOUNT, DEPOSIT_PHONE, DEPOSIT_REF_CODE, DEPOSIT_PROOF,
@@ -51,9 +46,6 @@ USED_TXNS_FILE = "used_txns.json"
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 db_lock = threading.Lock()
 
-# -------------------------------------------------------------
-# FASTAPI FOR RENDER HEALTH CHECK
-# -------------------------------------------------------------
 web_app = FastAPI()
 
 @web_app.get("/")
@@ -123,6 +115,22 @@ def get_main_keyboard():
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
 # -------------------------------------------------------------
+# AUTOMATIC BACKUP TO ADMIN
+# -------------------------------------------------------------
+async def backup_database_to_admin(context: ContextTypes.DEFAULT_TYPE):
+    """የደንበኞችን መረጃ በየጊዜው ወደ አድሚን ቴሌግራም ይልካል"""
+    try:
+        if os.path.exists(DB_FILE):
+            with open(DB_FILE, "rb") as doc:
+                await context.bot.send_document(
+                    chat_id=ADMIN_ID,
+                    document=doc,
+                    caption="📦 **የደንበኞች መረጃ አውቶማቲክ ባክአፕ (Backup File)**"
+                )
+    except Exception as e:
+        logging.error(f"Backup Error: {e}")
+
+# -------------------------------------------------------------
 # VERIFICATION LOGIC
 # -------------------------------------------------------------
 def verify_receipt_text(text: str, expected_amount: int, method: str) -> Tuple[bool, str]:
@@ -152,7 +160,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     first_name = update.effective_user.first_name or "ተጠቃሚ"
     
-    # ትኬት ሳይቆርጥ የሪፈራል ኮድ አይሰጠውም (ref_code = None)
     if user_id not in users_db:
         users_db[user_id] = {
             'first_name': first_name,
@@ -224,7 +231,7 @@ async def show_wallet(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 # -------------------------------------------------------------
-# 🎟 TICKET BUYING (DEPOSIT) FLOW
+# 🎟 TICKET BUYING FLOW
 # -------------------------------------------------------------
 async def start_buy_ticket(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
@@ -319,7 +326,6 @@ async def deposit_proof_received(update: Update, context: ContextTypes.DEFAULT_T
     users_db[user_id]['phone'] = phone
     users_db[user_id].setdefault('tickets', []).append(ticket_no)
 
-    # ትኬት ሲቆርጥ የሪፈራል ኮድ ከሌለው አዲስ የሪፈራል ኮድ ይመደብለታል
     if not users_db[user_id].get('ref_code'):
         users_db[user_id]['ref_code'] = generate_ref_code(user_id)
 
@@ -346,7 +352,7 @@ async def deposit_proof_received(update: Update, context: ContextTypes.DEFAULT_T
     await update.message.reply_text(
         f"🎉 **ክፍያዎ ተረጋግጦ ትኬትዎ ተቆርጧል!**\n\n"
         f"🎟 **የእጣ ቁጥር፦** `{ticket_no}`\n"
-        f"🔗 **የእርስዎ አዲሱ ሪፈራል ኮድ፦** `{my_ref_code}`\n\n"
+        f"🔗 **የእርስዎ ሪፈራል ኮድ፦** `{my_ref_code}`\n\n"
         f"✨ **መልካም እድል!**",
         parse_mode="Markdown",
         reply_markup=get_main_keyboard()
@@ -364,6 +370,14 @@ async def deposit_proof_received(update: Update, context: ContextTypes.DEFAULT_T
             admin_msg += f"\n🎁 ሪፈራል የተጠቀመው ከ፦ `{ref_owner_id}` (10 ETB ተከፍሏል)"
 
         await context.bot.send_message(chat_id=ADMIN_ID, text=admin_msg, parse_mode="Markdown")
+
+        # አዲስ ትኬት በተቆረጠ ቁጥር የዳታቤዙን አዲስ ባክአፕ ለአድሚን ይልካል
+        with open(DB_FILE, "rb") as doc:
+            await context.bot.send_document(
+                chat_id=ADMIN_ID,
+                document=doc,
+                caption=f"📦 **ባክአፕ (አዲስ ትኬት፦ {ticket_no})**"
+            )
     except Exception as e:
         logging.error(f"Admin Notify Error: {e}")
 
@@ -538,7 +552,7 @@ async def withdraw_pin_received(update: Update, context: ContextTypes.DEFAULT_TY
     return ConversationHandler.END
 
 # -------------------------------------------------------------
-# 📢 የCHANNEL 3 ሰዓት አውቶማቲክ ማስታወቂያ
+# 📢 CHANNEL UPDATES
 # -------------------------------------------------------------
 async def post_channel_updates(context: ContextTypes.DEFAULT_TYPE):
     if not users_db:
@@ -579,18 +593,56 @@ async def post_channel_updates(context: ContextTypes.DEFAULT_TYPE):
         logging.error(f"Channel Broadcast Error: {e}")
 
 # -------------------------------------------------------------
-# 📊 ADMIN STATS
+# 🎲 LOTTERY DRAWING & ADMIN COMMANDS
 # -------------------------------------------------------------
+async def draw_winner(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """አድሚኑ /draw ሲል አሸናፊውን በራንደም ይመርጣል"""
+    if update.effective_user.id != ADMIN_ID:
+        return
+
+    # ትኬት የቆረጡ ተጠቃሚዎችን እና የትኬት ቁጥሮቻቸውን መሰብሰብ
+    all_tickets = []
+    for uid, udata in users_db.items():
+        user_tickets = udata.get('tickets', [])
+        for tkt in user_tickets:
+            all_tickets.append((uid, udata.get('first_name', 'ተጠቃሚ'), udata.get('phone', 'የለም'), tkt))
+
+    if not all_tickets:
+        await update.message.reply_text("❌ እስካሁን ድረስ ምንም የተቆረጠ ትኬት የለም!")
+        return
+
+    # በእድል (Random) አሸናፊውን መምረጥ
+    winner_uid, winner_name, winner_phone, winning_ticket = random.choice(all_tickets)
+
+    msg = (
+        f"🎉 **የሎተሪ አሸናፊው ተለይቷል!** 🎉\n\n"
+        f"🎟 **የአሸናፊው ትኬት ቁጥር፦** `{winning_ticket}`\n"
+        f"👤 **የአሸናፊው ስም፦** {winner_name}\n"
+        f"🆔 **የአሸናፊው Telegram ID፦** `{winner_uid}`\n"
+        f"📱 **ስልክ ቁጥር፦** {winner_phone}\n\n"
+        f"👏 **እንኳን ደስ አለዎት!**"
+    )
+
+    await update.message.reply_text(msg, parse_mode="Markdown")
+
+    # አሸናፊውን በቴሌግራም ቻናል ላይ ለማወጅ
+    try:
+        channel_msg = (
+            f"🥳 **የዛሬው አሸናፊ ተለይቷል!**\n\n"
+            f"🎟 **አሸናፊ ትኬት፦** `{winning_ticket}`\n"
+            f"👤 **አሸናፊ፦** {winner_name}\n\n"
+            f"ቀጣዩ አሸናፊ እርስዎ ሊሆኑ ይችላሉ! ትኬት በመቁረጥ ይሳተፉ።"
+        )
+        await context.bot.send_message(chat_id=CHANNEL_USERNAME, text=channel_msg, parse_mode="Markdown")
+    except Exception as e:
+        logging.error(f"Winner Broadcast Error: {e}")
+
 async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
 
-    total_tickets = 0
+    total_tickets = sum(len(udata.get('tickets', [])) for udata in users_db.values())
     total_users = len(users_db)
-
-    for uid, udata in users_db.items():
-        tickets = udata.get('tickets', [])
-        total_tickets += len(tickets)
 
     msg = (
         f"📊 **የሲስተም አጠቃላይ መረጃ**\n\n"
@@ -598,6 +650,17 @@ async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"🎟 የተቆረጡ ትኬቶች ብዛት፦ {total_tickets}\n"
     )
     await update.message.reply_text(msg, parse_mode="Markdown")
+
+async def get_backup_now(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """አድሚኑ `/backup` ብሎ ሲፅፍ ወዲያውኑ የዳታቤዝ ፋይል ይልካለታል"""
+    if update.effective_user.id != ADMIN_ID:
+        return
+
+    if os.path.exists(DB_FILE):
+        with open(DB_FILE, "rb") as doc:
+            await update.message.reply_document(document=doc, caption="📦 **አሁን ያለው የደንበኞች መረጃ (Backup)**")
+    else:
+        await update.message.reply_text("❌ ምንም የዳታቤዝ ፋይል አልተገኘም።")
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("ወደ ዋና ማውጫ ተመልሰዋል፦", reply_markup=get_main_keyboard())
@@ -611,13 +674,16 @@ def main():
     server_thread.start()
 
     if not BOT_TOKEN:
-        logging.error("BOT_TOKEN አልተዘጋጀም! እባክዎን በ Render Environment Variables ውስጥ ያስገቡ።")
+        logging.error("BOT_TOKEN አልተዘጋጀም!")
         return
 
     app = Application.builder().token(BOT_TOKEN).build()
 
     if app.job_queue:
+        # በየ 3 ሰዓቱ ለቻናሉ ማስታወቂያ ይልካል
         app.job_queue.run_repeating(post_channel_updates, interval=10800, first=10)
+        # በየ 6 ሰዓቱ የዳታቤዙን ፋይል ለአድሚኑ በቴሌግራም ይልካል
+        app.job_queue.run_repeating(backup_database_to_admin, interval=21600, first=60)
 
     menu_button_filter = filters.Regex("^(🎟 ትኬት ይቁረጡ|💸 ገንዘብ ያውጡ|🔄 ገንዘብ ይላኩ|🎁 የሽልማት ዝርዝር|💼 የኔ ዋሌት|ወደ ቀድሞ ማውጫ ይመለሱ)$")
 
@@ -686,7 +752,11 @@ def main():
     app.add_handler(MessageHandler(filters.Regex("^🎁 የሽልማት ዝርዝር$"), show_rewards))
     app.add_handler(MessageHandler(filters.Regex("^💼 የኔ ዋሌት$"), show_wallet))
     app.add_handler(MessageHandler(filters.Regex("^(ወደ ቀድሞ ማውጫ ይመለሱ|/start)$"), start))
+    
+    # የአድሚን ትዕዛዞች (Admin Commands)
     app.add_handler(CommandHandler("stats", admin_stats))
+    app.add_handler(CommandHandler("backup", get_backup_now))
+    app.add_handler(CommandHandler("draw", draw_winner))
 
     logging.info("ቦቱ መስራት ጀምሯል...")
     app.run_polling(drop_pending_updates=True)
