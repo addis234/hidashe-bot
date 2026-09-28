@@ -37,11 +37,10 @@ DB_FILE = "users_db.json"
 USED_TXNS_FILE = "used_txns.json"
 
 (
-    SET_PIN,
     DEPOSIT_METHOD, DEPOSIT_AMOUNT, DEPOSIT_PHONE, DEPOSIT_REF_CODE, DEPOSIT_PROOF,
     TRANSFER_TARGET_ID, TRANSFER_AMOUNT, TRANSFER_PIN,
     WITHDRAW_METHOD, WITHDRAW_ACCOUNT_INFO, WITHDRAW_AMOUNT, WITHDRAW_PIN
-) = range(13)
+) = range(12)
 
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 db_lock = threading.Lock()
@@ -183,24 +182,21 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="Markdown"
     )
 
+    # PIN እስካሁን ካልመዘገበ ብቻ አንዴ እንዲያስገባ ይጠይቀዋል
     if not users_db[user_id].get('pin'):
-        await update.message.reply_text("🔒 እባክዎን ለአካውንትዎ አዲስ ባለ 4 አሃዝ የሚስጥር ቁጥር (PIN) ያስገቡ፦")
-        return SET_PIN
+        await update.message.reply_text("🔒 ለአካውንትዎ ደህንነት ሲባል ለወደፊት ገንዘብ ሲልኩና ሲያወጡ የሚያገለግልዎትን ባለ 4 አሃዝ የሚስጥር ቁጥር (PIN) ያስገቡ፦")
 
-    return ConversationHandler.END
-
-async def set_pin_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def general_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     text = update.message.text.strip()
 
-    if not (text.isdigit() and len(text) == 4):
-        await update.message.reply_text("❌ የሚስጥር ቁጥር ባለ 4 አሃዝ ቁጥር መሆን አለበት (ምሳሌ፦ 1234)። እባክዎን እንደገና ያስገቡ፦")
-        return SET_PIN
-
-    users_db[user_id]['pin'] = text
-    save_db()
-    await update.message.reply_text("✅ የሚስጥር ቁጥርዎ በጥሩ ሁኔታ ተመዝግቧል!", reply_markup=get_main_keyboard())
-    return ConversationHandler.END
+    if user_id in users_db and not users_db[user_id].get('pin'):
+        if text.isdigit() and len(text) == 4:
+            users_db[user_id]['pin'] = text
+            save_db()
+            await update.message.reply_text("✅ የሚስጥር ቁጥርዎ በጥሩ ሁኔታ ተመዝግቧል! አሁን አገልግሎቱን መጠቀም ይችላሉ።", reply_markup=get_main_keyboard())
+        else:
+            await update.message.reply_text("❌ የሚስጥር ቁጥር ባለ 4 አሃዝ ቁጥር መሆን አለበት (ምሳሌ፦ 1234)። እባክዎን እንደገና ያስገቡ፦")
 
 async def show_rewards(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = (
@@ -209,7 +205,6 @@ async def show_rewards(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "✨ ሌሎች አጓጊ ሽልማቶችን በ ሁለተኛ ዙር ይጠብቁን!"
     )
     await update.message.reply_text(msg, parse_mode="Markdown")
-    return ConversationHandler.END
 
 async def show_wallet(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -228,7 +223,6 @@ async def show_wallet(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"🔗 **የእርስዎ ሪፈራል ኮድ፦** {ref_display}"
     )
     await update.message.reply_text(msg, parse_mode="Markdown")
-    return ConversationHandler.END
 
 # -------------------------------------------------------------
 # 🎟 TICKET BUYING FLOW
@@ -371,7 +365,6 @@ async def deposit_proof_received(update: Update, context: ContextTypes.DEFAULT_T
 
         await context.bot.send_message(chat_id=ADMIN_ID, text=admin_msg, parse_mode="Markdown")
 
-        # አዲስ ትኬት በተቆረጠ ቁጥር የዳታቤዙን አዲስ ባክአፕ ለአድሚን ይልካል
         with open(DB_FILE, "rb") as doc:
             await context.bot.send_document(
                 chat_id=ADMIN_ID,
@@ -433,7 +426,7 @@ async def transfer_pin_received(update: Update, context: ContextTypes.DEFAULT_TY
     correct_pin = users_db[user_id].get('pin')
 
     if text != correct_pin:
-        await update.message.reply_text("ሚስጥር ቁጥርዎን እንደገና አስተካክለው በማስገባት ይሞክሩ፦")
+        await update.message.reply_text("❌ የሚስጥር ቁጥርዎ ትክክል አይደለም። እባክዎን እንደገና ይሞክሩ፦")
         return TRANSFER_PIN
 
     target_id = context.user_data['transfer_target']
@@ -515,7 +508,7 @@ async def withdraw_pin_received(update: Update, context: ContextTypes.DEFAULT_TY
     correct_pin = users_db[user_id].get('pin')
 
     if text != correct_pin:
-        await update.message.reply_text("ሚስጥር ቁጥርዎን እንደገና አስተካክለው በማስገባት ይሞክሩ፦")
+        await update.message.reply_text("❌ የሚስጥር ቁጥርዎ ትክክል አይደለም። እባክዎን እንደገና ይሞክሩ፦")
         return WITHDRAW_PIN
 
     amount = context.user_data['withdraw_amount']
@@ -600,7 +593,6 @@ async def draw_winner(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
 
-    # ትኬት የቆረጡ ተጠቃሚዎችን እና የትኬት ቁጥሮቻቸውን መሰብሰብ
     all_tickets = []
     for uid, udata in users_db.items():
         user_tickets = udata.get('tickets', [])
@@ -611,7 +603,6 @@ async def draw_winner(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ እስካሁን ድረስ ምንም የተቆረጠ ትኬት የለም!")
         return
 
-    # በእድል (Random) አሸናፊውን መምረጥ
     winner_uid, winner_name, winner_phone, winning_ticket = random.choice(all_tickets)
 
     msg = (
@@ -625,7 +616,6 @@ async def draw_winner(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(msg, parse_mode="Markdown")
 
-    # አሸናፊውን በቴሌግራም ቻናል ላይ ለማወጅ
     try:
         channel_msg = (
             f"🥳 **የዛሬው አሸናፊ ተለይቷል!**\n\n"
@@ -680,24 +670,10 @@ def main():
     app = Application.builder().token(BOT_TOKEN).build()
 
     if app.job_queue:
-        # በየ 3 ሰዓቱ ለቻናሉ ማስታወቂያ ይልካል
         app.job_queue.run_repeating(post_channel_updates, interval=10800, first=10)
-        # በየ 6 ሰዓቱ የዳታቤዙን ፋይል ለአድሚኑ በቴሌግራም ይልካል
         app.job_queue.run_repeating(backup_database_to_admin, interval=21600, first=60)
 
     menu_button_filter = filters.Regex("^(🎟 ትኬት ይቁረጡ|💸 ገንዘብ ያውጡ|🔄 ገንዘብ ይላኩ|🎁 የሽልማት ዝርዝር|💼 የኔ ዋሌት|ወደ ቀድሞ ማውጫ ይመለሱ)$")
-
-    pin_conv = ConversationHandler(
-        entry_points=[CommandHandler("start", start)],
-        states={
-            SET_PIN: [MessageHandler(filters.TEXT & ~filters.COMMAND & ~menu_button_filter, set_pin_handler)]
-        },
-        fallbacks=[
-            CommandHandler("cancel", cancel),
-            MessageHandler(menu_button_filter, cancel)
-        ],
-        per_user=True
-    )
 
     ticket_conv = ConversationHandler(
         entry_points=[MessageHandler(filters.Regex("^🎟 ትኬት ይቁረጡ$"), start_buy_ticket)],
@@ -744,7 +720,6 @@ def main():
         per_user=True
     )
 
-    app.add_handler(pin_conv)
     app.add_handler(ticket_conv)
     app.add_handler(transfer_conv)
     app.add_handler(withdraw_conv)
@@ -753,7 +728,10 @@ def main():
     app.add_handler(MessageHandler(filters.Regex("^💼 የኔ ዋሌት$"), show_wallet))
     app.add_handler(MessageHandler(filters.Regex("^(ወደ ቀድሞ ማውጫ ይመለሱ|/start)$"), start))
     
-    # የአድሚን ትዕዛዞች (Admin Commands)
+    # PIN ያልመዘገቡ ተጠቃሚዎች ቁጥር ሲልኩ መዝግቦ የሚያሳልፍ handler
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & ~menu_button_filter, general_text_handler))
+
+    # Admin Commands
     app.add_handler(CommandHandler("stats", admin_stats))
     app.add_handler(CommandHandler("backup", get_backup_now))
     app.add_handler(CommandHandler("draw", draw_winner))
