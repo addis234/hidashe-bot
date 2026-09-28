@@ -182,9 +182,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="Markdown"
     )
 
-    # PIN እስካሁን ካልመዘገበ ብቻ አንዴ እንዲያስገባ ይጠይቀዋል
     if not users_db[user_id].get('pin'):
         await update.message.reply_text("🔒 ለአካውንትዎ ደህንነት ሲባል ለወደፊት ገንዘብ ሲልኩና ሲያወጡ የሚያገለግልዎትን ባለ 4 አሃዝ የሚስጥር ቁጥር (PIN) ያስገቡ፦")
+
+async def return_to_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("ወደ ዋና ማውጫ ተመልሰዋል፦", reply_markup=get_main_keyboard())
 
 async def general_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -589,7 +591,6 @@ async def post_channel_updates(context: ContextTypes.DEFAULT_TYPE):
 # 🎲 LOTTERY DRAWING & ADMIN COMMANDS
 # -------------------------------------------------------------
 async def draw_winner(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """አድሚኑ /draw ሲል አሸናፊውን በራንደም ይመርጣል"""
     if update.effective_user.id != ADMIN_ID:
         return
 
@@ -642,7 +643,6 @@ async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(msg, parse_mode="Markdown")
 
 async def get_backup_now(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """አድሚኑ `/backup` ብሎ ሲፅፍ ወዲያውኑ የዳታቤዝ ፋይል ይልካለታል"""
     if update.effective_user.id != ADMIN_ID:
         return
 
@@ -653,7 +653,7 @@ async def get_backup_now(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ ምንም የዳታቤዝ ፋይል አልተገኘም።")
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("ወደ ዋና ማውጫ ተመልሰዋል፦", reply_markup=get_main_keyboard())
+    """በተን በሚነካበት ጊዜ ሂደቱን ያለ ምንም መልእክት በዝምታ ያቋርጣል"""
     return ConversationHandler.END
 
 # -------------------------------------------------------------
@@ -726,9 +726,9 @@ def main():
 
     app.add_handler(MessageHandler(filters.Regex("^🎁 የሽልማት ዝርዝር$"), show_rewards))
     app.add_handler(MessageHandler(filters.Regex("^💼 የኔ ዋሌት$"), show_wallet))
-    app.add_handler(MessageHandler(filters.Regex("^(ወደ ቀድሞ ማውጫ ይመለሱ|/start)$"), start))
+    app.add_handler(MessageHandler(filters.Regex("^ወደ ቀድሞ ማውጫ ይመለሱ$"), return_to_main_menu))
+    app.add_handler(CommandHandler("start", start))
     
-    # PIN ያልመዘገቡ ተጠቃሚዎች ቁጥር ሲልኩ መዝግቦ የሚያሳልፍ handler
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & ~menu_button_filter, general_text_handler))
 
     # Admin Commands
