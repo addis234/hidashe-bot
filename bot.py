@@ -262,7 +262,16 @@ async def general_text_handler(
 async def show_rewards(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = (
         "🎁 **የሽልማት ዝርዝር፦**\n\n"
-        "1️⃣ **Core i7 11th Generation Laptop** 💻\n\n"
+        "1️⃣ **1ኛ እጣ 10,000 ብር ** \n\n"
+        "2️⃣ **2ኛ እጣ 8,000 ብር ** \n\n"
+        "3️⃣ **3ኛ እጣ 6,000 ብር ** \n\n"
+        "4️⃣ **4ኛ እጣ 5,000 ብር ** \n\n"
+        "5️⃣ **5ኛ እጣ 4,000 ብር ** \n\n"
+        "6️⃣ **6ኛ እጣ 3,000 ብር ** \n\n"
+        "7️⃣ **7ኛ እጣ 2,000 ብር ** \n\n"
+        "8️⃣ **8ኛ እጣ 1,500 ብር ** \n\n"
+        "9️⃣ **9ኛ እጣ 1,000 ብር ** \n\n"
+        "🔟 **10ኛ እጣ 500 ብር ** \n\n"
         "✨ ሌሎች አጓጊ ሽልማቶችን በ ሁለተኛ ዙር ይጠብቁን!"
     )
     await update.message.reply_text(msg, parse_mode="Markdown")
