@@ -8,7 +8,7 @@ import string
 import threading
 from typing import Tuple
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, ReplyKeyboardMarkup, Update
 from telegram.ext import (
     Application,
@@ -20,6 +20,7 @@ from telegram.ext import (
     filters,
 )
 import uvicorn
+import requests
 
 try:
     from PIL import Image
@@ -32,7 +33,7 @@ except Exception:
 # -------------------------------------------------------------
 # CONFIGURATIONS & ENVIRONMENT VARIABLES
 # -------------------------------------------------------------
-BOT_TOKEN = os.environ.get("BOT_TOKEN")
+BOT_TOKEN = os.environ.get("BOT_TOKEN", "YOUR_TELEGRAM_BOT_TOKEN")
 ADMIN_ID = int(os.environ.get("ADMIN_ID", "6722504980"))
 
 # የቻናል ID - በቁጥር ስለሆነ ከፊት -100 ይጨመራል
@@ -65,13 +66,39 @@ logging.basicConfig(
 )
 db_lock = threading.Lock()
 
+# -------------------------------------------------------------
+# FASTAPI & AFRICA'S TALKING SMS WEBHOOK
+# -------------------------------------------------------------
 web_app = FastAPI()
-
 
 @web_app.get("/")
 def read_root():
     return {"status": "ok", "bot": "running"}
 
+@web_app.get("/sms-webhook")
+def sms_webhook_get():
+    return "Webhook active"
+
+@web_app.post("/sms-webhook")
+async def sms_webhook_post(request: Request):
+    form_data = await request.form()
+    sender = form_data.get("from", "")
+    text = form_data.get("text", "")
+    date = form_data.get("date", "")
+
+    if BOT_TOKEN and ADMIN_ID:
+        telegram_url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+        message = f"📩 አዲስ SMS ደርሷል!\n\nከ: {sender}\nመልእክት: {text}\nቀን: {date}"
+        payload = {
+            "chat_id": ADMIN_ID,
+            "text": message
+        }
+        try:
+            requests.post(telegram_url, json=payload, timeout=5)
+        except Exception as e:
+            logging.error(f"Error sending SMS to Telegram: {e}")
+
+    return {"status": "success"}
 
 def run_web_server():
     port = int(os.environ.get("PORT", 8080))
@@ -90,7 +117,6 @@ def load_used_txns() -> set:
             return set()
     return set()
 
-
 def save_used_txn(txn_id: str):
     used_txns.add(txn_id)
     with db_lock:
@@ -100,9 +126,7 @@ def save_used_txn(txn_id: str):
         except Exception as e:
             logging.error(f"Error saving txns: {e}")
 
-
 used_txns = load_used_txns()
-
 
 def load_db() -> dict:
     if os.path.exists(DB_FILE):
@@ -115,7 +139,6 @@ def load_db() -> dict:
             return {}
     return {}
 
-
 def save_db():
     with db_lock:
         try:
@@ -124,17 +147,13 @@ def save_db():
         except Exception as e:
             logging.error(f"Error saving DB: {e}")
 
-
 users_db = load_db()
-
 
 def generate_ref_code(user_id: int) -> str:
     return f"REF{user_id}"
 
-
 def generate_ticket_number() -> str:
     return "TKT" + "".join(random.choices(string.digits, k=6))
-
 
 def get_main_keyboard():
     keyboard = [
@@ -155,7 +174,6 @@ def get_main_keyboard():
 # AUTOMATIC BACKUP TO ADMIN
 # -------------------------------------------------------------
 async def backup_database_to_admin(context: ContextTypes.DEFAULT_TYPE):
-    """የደንበኞችን መረጃ በየጊዜው ወደ አድሚን ቴሌግራም ይልካል"""
     try:
         if os.path.exists(DB_FILE):
             with open(DB_FILE, "rb") as doc:
@@ -708,7 +726,7 @@ async def withdraw_pin_received(
 
 
 # -------------------------------------------------------------
-# 📢 AUTOMATIC CHANNEL POSTS (በየጊዜው የሚላኩ መልዕክቶች)
+# 📢 AUTOMATIC CHANNEL POSTS
 # -------------------------------------------------------------
 async def post_channel_updates(context: ContextTypes.DEFAULT_TYPE):
     top_referrers = []
@@ -727,7 +745,6 @@ async def post_channel_updates(context: ContextTypes.DEFAULT_TYPE):
         if t_count > 0:
             ticket_buyers.append(f"• **{name}** (የቲኬት ብዛት፦ {t_count})")
 
-    # በየጊዜው የሚቀያየሩ የተለያዩ የመልዕክት ዓይነቶች
     messages = [
         (
             f"📢 **የ Hidase Digital Lottery ወቅታዊ መረጃ!**\n\n"
@@ -762,7 +779,6 @@ async def post_channel_updates(context: ContextTypes.DEFAULT_TYPE):
         ),
     ]
 
-    # ከላይ ከተዘረዘሩት መልዕክቶች አንዱን በዘፈቀደ መርጦ ይልካል
     selected_msg = random.choice(messages)
 
     try:
@@ -860,7 +876,6 @@ async def get_backup_now(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """በተን በሚነካበት ጊዜ ሂደቱን ያለ ምንም መልእክት በዝምታ ያቋርጣል"""
     return ConversationHandler.END
 
 
@@ -878,16 +893,13 @@ def main():
     app = Application.builder().token(BOT_TOKEN).build()
 
     if app.job_queue:
-        # በየ 3 ሰዓቱ (10800 ሰከንድ) አውቶማቲክ መልዕክት ወደ ቻናሉ ይልካል
         app.job_queue.run_repeating(
             post_channel_updates, interval=10800, first=10
         )
-        # በየ 6 ሰዓቱ (21600 ሰከንድ) ዳታቤዙን ለአድሚን በቴሌግራም ይልካል
         app.job_queue.run_repeating(
             backup_database_to_admin, interval=21600, first=60
         )
 
-    # የተስተካከለ ማውጫ filter ("ወደ ቀድሞ ማውጫ ይመለሱ" የወጣበት)
     menu_button_filter = filters.Regex(
         "^(🎟 ትኬት ይቁረጡ|💸 ገንዘብ ያውጡ|🔄 ገንዘብ ይላኩ|🎁 የሽልማት ዝርዝር|💼 የኔ ዋሌት)$"
     )
