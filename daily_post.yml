@@ -1,0 +1,27 @@
+name: Daily Telegram Lottery Post
+
+on:
+  schedule:
+    - cron: '0 6 * * *'
+  workflow_dispatch:
+
+jobs:
+  send-message:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Code Check Out
+        uses: actions/checkout@v3
+
+      - name: Setup Python
+        uses: actions/python-setup@v4
+        with:
+          python-version: '3.x'
+
+      - name: Install Dependencies
+        run: pip install requests
+
+      - name: Run Script
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          CHAT_ID: ${{ secrets.CHAT_ID }}
+        run: python send_lottery.py
