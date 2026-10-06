@@ -2,9 +2,8 @@ name: Daily Telegram Lottery Post
 
 on:
   schedule:
-    # በየቀኑ ጠዋት 3:00 ሰዓት (6:00 AM UTC) እንዲልክ ማድረግ
     - cron: '0 6 * * *'
-  workflow_dispatch: # በፈለጉት ጊዜ በእጅ ለመሞከር (Manual Run)
+  workflow_dispatch:
 
 jobs:
   send-message:
@@ -14,7 +13,7 @@ jobs:
         uses: actions/checkout@v3
 
       - name: Setup Python
-        uses: actions/python-setup@v4
+        uses: actions/setup-python@v4
         with:
           python-version: '3.x'
 
