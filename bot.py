@@ -22,10 +22,16 @@ from telegram.ext import (
 import uvicorn
 import requests
 
+# -------------------------------------------------------------
+# SAFE OCR / TESSERACT IMPORT CHECK
+# -------------------------------------------------------------
+OCR_AVAILABLE = False
 try:
     from PIL import Image
     import pytesseract
 
+    # Render ላይ Tesseract binary መኖሩን በይፋ ማረጋገጥ
+    pytesseract.get_tesseract_version()
     OCR_AVAILABLE = True
 except Exception:
     OCR_AVAILABLE = False
