@@ -30,7 +30,6 @@ try:
     from PIL import Image
     import pytesseract
 
-    # Render ላይ Tesseract binary መኖሩን በይፋ ማረጋገጥ
     pytesseract.get_tesseract_version()
     OCR_AVAILABLE = True
 except Exception:
@@ -896,7 +895,8 @@ def main():
         logging.error("BOT_TOKEN አልተዘጋጀም!")
         return
 
-    app = Application.builder().token(BOT_TOKEN).build()
+    # UPDATER NONE ተጨምሮ የተስተካከለው የመጨረሻው መስመር፦
+    app = Application.builder().token(BOT_TOKEN).updater(None).build()
 
     if app.job_queue:
         app.job_queue.run_repeating(
