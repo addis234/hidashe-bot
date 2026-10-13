@@ -109,7 +109,7 @@ def run_web_server():
     uvicorn.run(web_app, host="0.0.0.0", port=port, log_level="warning")
 
 # -------------------------------------------------------------
-# DATABASE MANAGEMENT
+# DATABASE MANAGEMENT (UPDATED FOR ROUNDS & PERSISTENCE)
 # -------------------------------------------------------------
 def load_used_txns() -> set:
     if os.path.exists(USED_TXNS_FILE):
@@ -136,21 +136,41 @@ def load_db() -> dict:
         try:
             with open(DB_FILE, "r", encoding="utf-8") as f:
                 data = json.load(f)
-            return {int(k): v for k, v in data.items()}
+            # ዩዘር ID ዎችን ወደ int መቀየር
+            parsed_db = {}
+            for k, v in data.items():
+                if k.isdigit() or (k.startswith('-') and k[1:].isdigit()):
+                    parsed_db[int(k)] = v
+                else:
+                    parsed_db[k] = v
+            return parsed_db
         except Exception as e:
             logging.error(f"Error loading DB: {e}")
-            return {}
-    return {}
+            return {"users": {}, "current_round": "round_1", "history": []}
+    return {"users": {}, "current_round": "round_1", "history": []}
 
 def save_db():
     with db_lock:
         try:
             with open(DB_FILE, "w", encoding="utf-8") as f:
-                json.dump(users_db, f, ensure_ascii=False, indent=2)
+                json.dump(database_root, f, ensure_ascii=False, indent=2)
         except Exception as e:
             logging.error(f"Error saving DB: {e}")
 
-users_db = load_db()
+database_root = load_db()
+
+# ዳታቤዙ አሮጌ ወይም አዲስ መሆኑን በማረጋገጥ structure ን ማስተካከል
+if "users" not in database_root:
+    # የድሮውን ዳታ አወቃቀር ወደ አዲስ ዙር-ተኮር (Round-based) መዋቅር ማሸጋገር
+    old_data = database_root.copy()
+    database_root = {
+        "current_round": "round_1",
+        "history": [],
+        "users": old_data
+    }
+    save_db()
+
+users_db = database_root["users"]
 
 def generate_ref_code(user_id: int) -> str:
     return f"REF{user_id}"
@@ -234,13 +254,16 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "wallet_balance": 0,
             "pin": None,
             "ref_code": None,
-            "tickets": [],
+            "tickets": {}, # በዙር (round) የተከፋፈለ የቲኬት ማከማቻ
             "referred_count": 0,
             "phone": None,
         }
         save_db()
     else:
         users_db[user_id]["first_name"] = first_name
+        # ለቀድሞ ተጠቃሚዎች tickets ዲክሽነሪ ከሌለ ማስተካከል
+        if "tickets" not in users_db[user_id]:
+            users_db[user_id]["tickets"] = {}
         save_db()
 
     await update.message.reply_text(
@@ -297,7 +320,16 @@ async def show_wallet(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_data = users_db.get(user_id, {})
     balance = user_data.get("wallet_balance", 0)
     ref_code = user_data.get("ref_code")
-    tickets = len(user_data.get("tickets", []))
+    
+    # አሁን ባለው ዙር (current_round) የተቆረጡትን ትኬቶች ብቻ መቁጠር
+    current_round = database_root.get("current_round", "round_1")
+    user_tickets_dict = user_data.get("tickets", {})
+    
+    # ለአሮጌው ዳታ ፎርማት ተኳሃኝነት (ሊስት ከሆነ)
+    if isinstance(user_tickets_dict, list):
+        tickets = len(user_tickets_dict)
+    else:
+        tickets = len(user_tickets_dict.get(current_round, []))
 
     ref_display = (
         f"`{ref_code}`" if ref_code else "⚠️ ትኬት ሲቆርጡ የሚሰጥዎት ይሆናል"
@@ -307,7 +339,7 @@ async def show_wallet(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"💼 **የእርስዎ አካውንት መረጃ**\n\n"
         f"🆔 **የእርስዎ ID፦** `{user_id}`\n"
         f"💰 **የዋሌት መጠን፦** {balance} ETB\n"
-        f"🎟 **የቆረጡት ትኬት ብዛት፦** {tickets}\n"
+        f"🎟 **የቆረጡት ትኬት ብዛት ({current_round})፦** {tickets}\n"
         f"🔗 **የእርስዎ ሪፈራል ኮድ፦** {ref_display}"
     )
     await update.message.reply_text(msg, parse_mode="Markdown")
@@ -430,7 +462,17 @@ async def deposit_proof_received(
     ticket_no = generate_ticket_number()
     users_db[user_id]["wallet_balance"] += expected_amount
     users_db[user_id]["phone"] = phone
-    users_db[user_id].setdefault("tickets", []).append(ticket_no)
+    
+    # ቲኬቱን አሁን ባለው ዙር (current_round) ስር ማስቀመጥ
+    current_round = database_root.get("current_round", "round_1")
+    if "tickets" not in users_db[user_id]:
+        users_db[user_id]["tickets"] = {}
+    if isinstance(users_db[user_id]["tickets"], list):
+        # የድሮ ሊስት ፎርማት ከነበረ ወደ ዲስክሽነሪ መቀየር
+        old_list = users_db[user_id]["tickets"]
+        users_db[user_id]["tickets"] = {current_round: old_list}
+        
+    users_db[user_id]["tickets"].setdefault(current_round, []).append(ticket_no)
 
     if not users_db[user_id].get("ref_code"):
         users_db[user_id]["ref_code"] = generate_ref_code(user_id)
@@ -459,7 +501,7 @@ async def deposit_proof_received(
 
     await update.message.reply_text(
         f"🎉 **ክፍያዎ ተረጋግጦ ትኬትዎ ተቆርጧል!**\n\n"
-        f"🎟 **የእጣ ቁጥር፦** `{ticket_no}`\n"
+        f"🎟 **የእጣ ቁጥር ({current_round})፦** `{ticket_no}`\n"
         f"🔗 **የእርስዎ ሪፈራል ኮድ፦** `{my_ref_code}`\n\n"
         f"✨ **መልካም እድል!**",
         parse_mode="Markdown",
@@ -472,7 +514,7 @@ async def deposit_proof_received(
             f"👤 ተጠቃሚ ID፦ `{user_id}`\n"
             f"📱 ስልክ፦ {phone}\n"
             f"💵 የተከፈለ መጠን፦ {expected_amount} ETB\n"
-            f"🎟 የእጣ ቁጥር፦ `{ticket_no}`"
+            f"🎟 የእጣ ቁጥር ({current_round})፦ `{ticket_no}`"
         )
         if ref_owner_id:
             admin_msg += f"\n🎁 ሪፈራል የተጠቀመው ከ፦ `{ref_owner_id}` (10 ETB ተከፍሏል)"
@@ -712,6 +754,7 @@ async def withdraw_pin_received(
 async def post_channel_updates(context: ContextTypes.DEFAULT_TYPE):
     top_referrers = []
     ticket_buyers = []
+    current_round = database_root.get("current_round", "round_1")
 
     for uid, udata in users_db.items():
         name = udata.get("first_name", "ተጠቃሚ")
@@ -722,7 +765,12 @@ async def post_channel_updates(context: ContextTypes.DEFAULT_TYPE):
                 f"• **{name}** ➡️ {ref_cnt} ሰው ያስቆረጠ ({earned} ETB የሰራ)"
             )
 
-        t_count = len(udata.get("tickets", []))
+        user_tickets = udata.get("tickets", {})
+        if isinstance(user_tickets, list):
+            t_count = len(user_tickets)
+        else:
+            t_count = len(user_tickets.get(current_round, []))
+            
         if t_count > 0:
             ticket_buyers.append(f"• **{name}** (የቲኬት ብዛት፦ {t_count})")
 
@@ -737,7 +785,7 @@ async def post_channel_updates(context: ContextTypes.DEFAULT_TYPE):
                 else ""
             )
             + (
-                "🎟 **ትኬት የወጣላቸው ተጠቃሚዎች ስም ዝርዝር፦**\n"
+                f"🎟 **ትኬት የወጣላቸው ተጠቃሚዎች ስም ዝርዝር ({current_round})፦**\n"
                 + "\n".join(ticket_buyers[:10])
                 + "\n\n"
                 if ticket_buyers
@@ -771,16 +819,26 @@ async def post_channel_updates(context: ContextTypes.DEFAULT_TYPE):
         logging.error(f"Channel Broadcast Error: {e}")
 
 # -------------------------------------------------------------
-# 🎲 LOTTERY DRAWING & ADMIN COMMANDS
+# 🎲 LOTTERY DRAWING & ADMIN COMMANDS (ROUND-SAFE)
 # -------------------------------------------------------------
 async def draw_winner(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
 
+    current_round = database_root.get("current_round", "round_1")
     all_tickets = []
+    
     for uid, udata in users_db.items():
-        user_tickets = udata.get("tickets", [])
-        for tkt in user_tickets:
+        user_tickets = udata.get("tickets", {})
+        
+        # የትኬቶችን ዝርዝር ማውጣት (ለአሮጌ እና ለአዲስ ፎርማት ተስማሚ እንዲሆን)
+        round_tickets = []
+        if isinstance(user_tickets, list):
+            round_tickets = user_tickets
+        elif isinstance(user_tickets, dict):
+            round_tickets = user_tickets.get(current_round, [])
+            
+        for tkt in round_tickets:
             all_tickets.append(
                 (
                     uid,
@@ -792,7 +850,7 @@ async def draw_winner(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not all_tickets:
         await update.message.reply_text(
-            "❌ እስካሁን ድረስ ምንም የተቆረጠ ትኬት የለም!"
+            f"❌ በአሁኑ ዙር ({current_round}) እስካሁን የተቆረጠ ትኬት የለም!"
         )
         return
 
@@ -801,7 +859,7 @@ async def draw_winner(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     msg = (
-        f"🎉 **የሎተሪ አሸናፊው ተለይቷል!** 🎉\n\n"
+        f"🎉 **የሎተሪ አሸናፊው ተለይቷል! ({current_round})** 🎉\n\n"
         f"🎟 **የአሸናፊው ትኬት ቁጥር፦** `{winning_ticket}`\n"
         f"👤 **የአሸናፊው ስም፦** {winner_name}\n"
         f"🆔 **የአሸናፊው Telegram ID፦** `{winner_uid}`\n"
@@ -813,10 +871,10 @@ async def draw_winner(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     try:
         channel_msg = (
-            f"🥳 **የዛሬው አሸናፊ ተለይቷል!**\n\n"
+            f"🥳 **የዛሬው ዙር አሸናፊ ተለይቷል! ({current_round})**\n\n"
             f"🎟 **አሸናፊ ትኬት፦** `{winning_ticket}`\n"
             f"👤 **አሸናፊ፦** {winner_name}\n\n"
-            f"ቀጣዩ አሸናፊ እርስዎ ሊሆኑ ይችላሉ! ትኬት በመቁረጥ ይሳተፉ።"
+            f"ቀጣዩ አሸናፊ እርስዎ ሊሆኑ ይችላሉ! አዲሱ ዙር ተከፍቷል!"
         )
         await context.bot.send_message(
             chat_id=CHANNEL_USERNAME, text=channel_msg, parse_mode="Markdown"
@@ -824,19 +882,43 @@ async def draw_winner(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logging.error(f"Winner Broadcast Error: {e}")
 
+    # እጣ ከወጣ በኋላ አሮጌዎቹ ትኬቶች ከአዲሶቹ ጋር እንዳይጋጩ ወደ ታሪክ (history) በማሸጋገር አዲስ ዙር መክፈት
+    database_root["history"].append({
+        "round_name": current_round,
+        "winner_ticket": winning_ticket,
+        "winner_id": winner_uid
+    })
+    
+    # አዲስ ዙር ቁጥር ማመንጨት (ለምሳሌ round_1 -> round_2)
+    round_num = int(current_round.replace("round_", "")) + 1
+    database_root["current_round"] = f"round_{round_num}"
+    save_db()
+    
+    await update.message.reply_text(
+        f"🔄 **አዲስ ዙር ({database_root['current_round']}) ተጀምሯል!** የቀድሞዎቹ ትኬቶች ተዘግተዋል አዲሶቹ ተጠቃሚዎች መሳተፍ ይችላሉ።",
+        parse_mode="Markdown"
+    )
+
 async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
 
-    total_tickets = sum(
-        len(udata.get("tickets", [])) for udata in users_db.values()
-    )
+    current_round = database_root.get("current_round", "round_1")
+    total_tickets = 0
+    for udata in users_db.values():
+        ut = udata.get("tickets", {})
+        if isinstance(ut, list):
+            total_tickets += len(ut)
+        elif isinstance(ut, dict):
+            total_tickets += len(ut.get(current_round, []))
+            
     total_users = len(users_db)
 
     msg = (
         f"📊 **የሲስተም አጠቃላይ መረጃ**\n\n"
+        f"🎯 አሁን ያለበት ዙር፦ {current_round}\n"
         f"👥 አጠቃላይ ተጠቃሚዎች፦ {total_users}\n"
-        f"🎟 የተቆረጡ ትኬቶች ብዛት፦ {total_tickets}\n"
+        f"🎟 በዚህ ዙር የተቆረጡ ትኬቶች፦ {total_tickets}\n"
     )
     await update.message.reply_text(msg, parse_mode="Markdown")
 
