@@ -136,7 +136,6 @@ def load_db() -> dict:
         try:
             with open(DB_FILE, "r", encoding="utf-8") as f:
                 data = json.load(f)
-            # ዩዘር ID ዎችን ወደ int መቀየር
             parsed_db = {}
             for k, v in data.items():
                 if k.isdigit() or (k.startswith('-') and k[1:].isdigit()):
@@ -159,9 +158,7 @@ def save_db():
 
 database_root = load_db()
 
-# ዳታቤዙ አሮጌ ወይም አዲስ መሆኑን በማረጋገጥ structure ን ማስተካከል
 if "users" not in database_root:
-    # የድሮውን ዳታ አወቃቀር ወደ አዲስ ዙር-ተኮር (Round-based) መዋቅር ማሸጋገር
     old_data = database_root.copy()
     database_root = {
         "current_round": "round_1",
@@ -254,14 +251,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "wallet_balance": 0,
             "pin": None,
             "ref_code": None,
-            "tickets": {}, # በዙር (round) የተከፋፈለ የቲኬት ማከማቻ
+            "tickets": {},
             "referred_count": 0,
             "phone": None,
         }
         save_db()
     else:
         users_db[user_id]["first_name"] = first_name
-        # ለቀድሞ ተጠቃሚዎች tickets ዲክሽነሪ ከሌለ ማስተካከል
         if "tickets" not in users_db[user_id]:
             users_db[user_id]["tickets"] = {}
         save_db()
@@ -317,15 +313,27 @@ async def show_rewards(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def show_wallet(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
+    
+    # ተጠቃሚው ገና በዳታቤዝ ውስጥ ከሌለ በራስ-ሰር መመዝገብ
+    if user_id not in users_db:
+        users_db[user_id] = {
+            "first_name": update.effective_user.first_name or "ተጠቃሚ",
+            "wallet_balance": 0,
+            "pin": None,
+            "ref_code": None,
+            "tickets": {},
+            "referred_count": 0,
+            "phone": None,
+        }
+        save_db()
+
     user_data = users_db.get(user_id, {})
     balance = user_data.get("wallet_balance", 0)
     ref_code = user_data.get("ref_code")
     
-    # አሁን ባለው ዙር (current_round) የተቆረጡትን ትኬቶች ብቻ መቁጠር
     current_round = database_root.get("current_round", "round_1")
     user_tickets_dict = user_data.get("tickets", {})
     
-    # ለአሮጌው ዳታ ፎርማት ተኳሃኝነት (ሊስት ከሆነ)
     if isinstance(user_tickets_dict, list):
         tickets = len(user_tickets_dict)
     else:
@@ -463,12 +471,10 @@ async def deposit_proof_received(
     users_db[user_id]["wallet_balance"] += expected_amount
     users_db[user_id]["phone"] = phone
     
-    # ቲኬቱን አሁን ባለው ዙር (current_round) ስር ማስቀመጥ
     current_round = database_root.get("current_round", "round_1")
     if "tickets" not in users_db[user_id]:
         users_db[user_id]["tickets"] = {}
     if isinstance(users_db[user_id]["tickets"], list):
-        # የድሮ ሊስት ፎርማት ከነበረ ወደ ዲስክሽነሪ መቀየር
         old_list = users_db[user_id]["tickets"]
         users_db[user_id]["tickets"] = {current_round: old_list}
         
@@ -831,7 +837,6 @@ async def draw_winner(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for uid, udata in users_db.items():
         user_tickets = udata.get("tickets", {})
         
-        # የትኬቶችን ዝርዝር ማውጣት (ለአሮጌ እና ለአዲስ ፎርማት ተስማሚ እንዲሆን)
         round_tickets = []
         if isinstance(user_tickets, list):
             round_tickets = user_tickets
@@ -882,14 +887,12 @@ async def draw_winner(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logging.error(f"Winner Broadcast Error: {e}")
 
-    # እጣ ከወጣ በኋላ አሮጌዎቹ ትኬቶች ከአዲሶቹ ጋር እንዳይጋጩ ወደ ታሪክ (history) በማሸጋገር አዲስ ዙር መክፈት
     database_root["history"].append({
         "round_name": current_round,
         "winner_ticket": winning_ticket,
         "winner_id": winner_uid
     })
     
-    # አዲስ ዙር ቁጥር ማመንጨት (ለምሳሌ round_1 -> round_2)
     round_num = int(current_round.replace("round_", "")) + 1
     database_root["current_round"] = f"round_{round_num}"
     save_db()
