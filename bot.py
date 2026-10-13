@@ -314,7 +314,6 @@ async def show_rewards(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def show_wallet(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     
-    # ተጠቃሚው ገና በዳታቤዝ ውስጥ ከሌለ በራስ-ሰር መመዝገብ
     if user_id not in users_db:
         users_db[user_id] = {
             "first_name": update.effective_user.first_name or "ተጠቃሚ",
@@ -940,6 +939,9 @@ async def get_backup_now(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
+async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
+    logging.error(f"Exception while handling an update: {context.error}")
+
 # -------------------------------------------------------------
 # MAIN APP SETUP
 # -------------------------------------------------------------
@@ -952,6 +954,9 @@ def main():
     server_thread.start()
 
     app = Application.builder().token(BOT_TOKEN).build()
+
+    # Register error handler
+    app.add_error_handler(error_handler)
 
     if app.job_queue:
         app.job_queue.run_repeating(
