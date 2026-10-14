@@ -1,4 +1,4 @@
-Import asyncio
+import asyncio
 import json
 import logging
 import os
@@ -43,6 +43,7 @@ ADMIN_ID = int(os.environ.get("ADMIN_ID", "6722504980"))
 
 CHANNEL_USERNAME = -1003865662998
 
+# የተጠቃሚዎች ክፍያ የሚፈጽሙባቸው ትክክለኛ መረጃዎች
 MY_CBE_NAME = "Melkam Enyew Belete"
 MY_CBE_ACC = "1000462638454"
 
@@ -411,14 +412,22 @@ async def deposit_ref_code_received(
     amount = context.user_data.get("dep_amount", 0)
     
     if method == "CBE":
-        acc_details = f"የባንክ ስም፦ ንግድ ባንክ (CBE)\nየአካውንት ቁጥር፦ {MY_CBE_ACC}\nየአካውንት ስም፦ {MY_CBE_NAME}"
+        payment_info = (
+            f"የክፍያ መረጃ (ንግድ ባንክ)\n\n"
+            f"መጠን፦ {amount} ETB\n"
+            f"የአካውንት ቁጥር፦ {MY_CBE_ACC}\n"
+            f"የአካውንት ስም፦ {MY_CBE_NAME}"
+        )
     else:
-        acc_details = f"የቴሌብር ስም፦ ቴሌብር (Telebirr)\nየስልክ ቁጥር፦ {MY_TELEBIRR_ACC}\nየስም ዝርዝር፦ {MY_TELEBIRR_NAME}"
+        payment_info = (
+            f"የክፍያ መረጃ (ቴሌብር)\n\n"
+            f"መጠን፦ {amount} ETB\n"
+            f"ስልክ ቁጥር፦ {MY_TELEBIRR_ACC}\n"
+            f"ስም፦ {MY_TELEBIRR_NAME}"
+        )
 
     await update.message.reply_text(
-        f"የክፍያ መረጃ\n\n"
-        f"መጠን፦ {amount} ETB\n\n"
-        f"{acc_details}\n\n"
+        f"{payment_info}\n\n"
         f"እባክዎን ክፍያውን ፈጽመው የባንኩን/ቴሌብርን SMS ጽሁፍ ወይም ደረሰኝ (Photo) እዚህ ይላኩ፦"
     )
     return DEPOSIT_PROOF
