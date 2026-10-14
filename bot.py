@@ -38,7 +38,7 @@ except Exception:
 # -------------------------------------------------------------
 # CONFIGURATIONS & ENVIRONMENT VARIABLES
 # -------------------------------------------------------------
-BOT_TOKEN = os.environ.get("BOT_TOKEN", "YOUR_TELEGRAM_BOT_TOKEN")
+BOT_TOKEN = "8833785126:AAGMZ6q5O6OSrXZx6IjCwJRxPcmaliL7WyY"
 ADMIN_ID = int(os.environ.get("ADMIN_ID", "6722504980"))
 
 CHANNEL_USERNAME = -1003865662998
@@ -92,7 +92,7 @@ async def sms_webhook_post(request: Request):
 
     if BOT_TOKEN and ADMIN_ID:
         telegram_url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-        message = f"📩 አዲስ SMS ደርሷል!\n\nከ: {sender}\nመልእክት: {text}\nቀን: {date}"
+        message = f"አዲስ SMS ደርሷል!\n\nከ: {sender}\nመልእክት: {text}\nቀን: {date}"
         payload = {
             "chat_id": ADMIN_ID,
             "text": message
@@ -109,7 +109,7 @@ def run_web_server():
     uvicorn.run(web_app, host="0.0.0.0", port=port, log_level="warning")
 
 # -------------------------------------------------------------
-# DATABASE MANAGEMENT (UPDATED FOR ROUNDS & PERSISTENCE)
+# DATABASE MANAGEMENT
 # -------------------------------------------------------------
 def load_used_txns() -> set:
     if os.path.exists(USED_TXNS_FILE):
@@ -199,7 +199,7 @@ async def backup_database_to_admin(context: ContextTypes.DEFAULT_TYPE):
                 await context.bot.send_document(
                     chat_id=ADMIN_ID,
                     document=doc,
-                    caption="📦 **የደንበኞች መረጃ አውቶማቲክ ባክአፕ (Backup File)**",
+                    caption="የደንበኞች መረጃ አውቶማቲክ ባክአፕ (Backup File)",
                 )
     except Exception as e:
         logging.error(f"Backup Error: {e}")
@@ -232,11 +232,11 @@ def verify_receipt_text(
         if txn_id in used_txns:
             return (
                 False,
-                "❌ ይህ የትራንዛክሽን ቁጥር/ደረሰኝ ቀደም ብሎ ጥቅም ላይ ውሏል!",
+                "ይህ የትራንዛክሽን ቁጥር/ደረሰኝ ቀደም ብሎ ጥቅም ላይ ውሏል!",
             )
         save_used_txn(txn_id)
 
-    return True, "✅ ማረጋገጫው ተሳክቷል!"
+    return True, "ማረጋገጫው ተሳክቷል!"
 
 # -------------------------------------------------------------
 # COMMAND & MENU HANDLERS
@@ -263,16 +263,15 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         save_db()
 
     await update.message.reply_text(
-        "✨ **እንኳን ወደ ህዳሴ ዲጂታል ሎተሪ በደህና መጡ!** ✨\n\n"
+        "እንኳን ወደ ህዳሴ ዲጂታል ሎተሪ በደህና መጡ!\n\n"
         "የሎተሪ ትኬት በመቁረጥ የተለያዩ አጓጊ ሽልማቶችን ያሸንፉ!\n"
-        "📺 የሎተሪ አወጣጥ ሂደቱ ግልጽ እና አጓጊ ሆኖ በቻናላችን ቀጥታ (Live) ይተላለፋል።",
+        "የሎተሪ አወጣጥ ሂደቱ ግልጽ እና አጓጊ ሆኖ በቻናላችን ቀጥታ (Live) ይተላለፋል።",
         reply_markup=get_main_keyboard(),
-        parse_mode="Markdown",
     )
 
     if not users_db[user_id].get("pin"):
         await update.message.reply_text(
-            "🔒 ለአካውንትዎ ደህንነት ሲባል ለወደፊት ገንዘብ ሲልኩና ሲያወጡ የሚያገለግልዎትን ባለ 4 አሃዝ የሚስጥር ቁጥር (PIN) ያስገቡ፦"
+            "ለአካውንትዎ ደህንነት ሲባል ለወደፊት ገንዘብ ሲልኩና ሲያወጡ የሚያገለግልዎትን ባለ 4 አሃዝ የሚስጥር ቁጥር (PIN) ያስገቡ፦"
         )
 
 async def general_text_handler(
@@ -286,30 +285,30 @@ async def general_text_handler(
             users_db[user_id]["pin"] = text
             save_db()
             await update.message.reply_text(
-                "✅ የሚስጥር ቁጥርዎ በጥሩ ሁኔታ ተመዝግቧል! አሁን አገልግሎቱን መጠቀም ይችላሉ።",
+                "የሚስጥር ቁጥርዎ በጥሩ ሁኔታ ተመዝግቧል! አሁን አገልግሎቱን መጠቀም ይችላሉ።",
                 reply_markup=get_main_keyboard(),
             )
         else:
             await update.message.reply_text(
-                "❌ የሚስጥር ቁጥር ባለ 4 አሃዝ ቁጥር መሆን አለበት (ምሳሌ፦ 1234)። እባክዎን እንደገና ያስገቡ፦"
+                "የሚስጥር ቁጥር ባለ 4 አሃዝ ቁጥር መሆን አለበት (ምሳሌ፦ 1234)። እባክዎን እንደገና ያስገቡ፦"
             )
 
 async def show_rewards(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = (
-        "🎁 **የሽልማት ዝርዝር፦**\n\n"
-        "1️⃣ **1ኛ እጣ 10,000 ብር ** \n\n"
-        "2️⃣ **2ኛ እጣ 8,000 ብር ** \n\n"
-        "3️⃣ **3ኛ እጣ 6,000 ብር ** \n\n"
-        "4️⃣ **4ኛ እጣ 5,000 ብር ** \n\n"
-        "5️⃣ **5ኛ እጣ 4,000 ብር ** \n\n"
-        "6️⃣ **6ኛ እጣ 3,000 ብር ** \n\n"
-        "7️⃣ **7ኛ እጣ 2,000 ብር ** \n\n"
-        "8️⃣ **8ኛ እጣ 1,500 ብር ** \n\n"
-        "9️⃣ **9ኛ እጣ 1,000 ብር ** \n\n"
-        "🔟 **10ኛ እጣ 500 ብር ** \n\n"
-        "✨ ሌሎች አጓጊ ሽልማቶችን በ ሁለተኛ ዙር ይጠብቁን!"
+        "የሽልማት ዝርዝር፦\n\n"
+        "1ኛ እጣ 10,000 ብር\n\n"
+        "2ኛ እጣ 8,000 ብር\n\n"
+        "3ኛ እጣ 6,000 ብር\n\n"
+        "4ኛ እጣ 5,000 ብር\n\n"
+        "5ኛ እጣ 4,000 ብር\n\n"
+        "6ኛ እጣ 3,000 ብር\n\n"
+        "7ኛ እጣ 2,000 ብር\n\n"
+        "8ኛ እጣ 1,500 ብር\n\n"
+        "9ኛ እጣ 1,000 ብር\n\n"
+        "10ኛ እጣ 500 ብር\n\n"
+        "ሌሎች አጓጊ ሽልማቶችን በ ሁለተኛ ዙር ይጠብቁን!"
     )
-    await update.message.reply_text(msg, parse_mode="Markdown")
+    await update.message.reply_text(msg)
 
 async def show_wallet(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -338,18 +337,16 @@ async def show_wallet(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         tickets = len(user_tickets_dict.get(current_round, []))
 
-    ref_display = (
-        f"`{ref_code}`" if ref_code else "⚠️ ትኬት ሲቆርጡ የሚሰጥዎት ይሆናል"
-    )
+    ref_display = f"{ref_code}" if ref_code else "ትኬት ሲቆርጡ የሚሰጥዎት ይሆናል"
 
     msg = (
-        f"💼 **የእርስዎ አካውንት መረጃ**\n\n"
-        f"🆔 **የእርስዎ ID፦** `{user_id}`\n"
-        f"💰 **የዋሌት መጠን፦** {balance} ETB\n"
-        f"🎟 **የቆረጡት ትኬት ብዛት ({current_round})፦** {tickets}\n"
-        f"🔗 **የእርስዎ ሪፈራል ኮድ፦** {ref_display}"
+        f"የእርስዎ አካውንት መረጃ\n\n"
+        f"የእርስዎ ID፦ {user_id}\n"
+        f"የዋሌት መጠን፦ {balance} ETB\n"
+        f"የቆረጡት ትኬት ብዛት ({current_round})፦ {tickets}\n"
+        f"የእርስዎ ሪፈራል ኮድ፦ {ref_display}"
     )
-    await update.message.reply_text(msg, parse_mode="Markdown")
+    await update.message.reply_text(msg)
 
 # -------------------------------------------------------------
 # 🎟 TICKET BUYING FLOW
@@ -374,8 +371,7 @@ async def deposit_method_selected(
     context.user_data["dep_method"] = method
 
     await query.edit_message_text(
-        f"የመረጡት መንገድ፦ **{method}**\n\nእባክዎን ለትኬቱ የሚከፍሉትን የብር መጠን በቁጥር ብቻ ያስገቡ፦",
-        parse_mode="Markdown",
+        f"የመረጡት መንገድ፦ {method}\n\nእባክዎን ለትኬቱ የሚከፍሉትን የብር መጠን በቁጥር ብቻ ያስገቡ፦"
     )
     return DEPOSIT_AMOUNT
 
@@ -385,12 +381,12 @@ async def deposit_amount_received(
     text = update.message.text.strip()
     if not text.isdigit():
         await update.message.reply_text(
-            "❌ እባክዎን የብር መጠን በቁጥር ብቻ ያስገቡ፦"
+            "እባክዎን የብር መጠን በቁጥር ብቻ ያስገቡ፦"
         )
         return DEPOSIT_AMOUNT
 
     context.user_data["dep_amount"] = int(text)
-    await update.message.reply_text("📱 እባክዎን የስልክ ቁጥርዎን ያስገቡ፦")
+    await update.message.reply_text("እባክዎን የስልክ ቁጥርዎን ያስገቡ፦")
     return DEPOSIT_PHONE
 
 async def deposit_phone_received(
@@ -398,7 +394,7 @@ async def deposit_phone_received(
 ):
     context.user_data["dep_phone"] = update.message.text.strip()
     await update.message.reply_text(
-        "🔗 ከተጋበዙ የሪፈራል ኮድ ያስገቡ (ከሌለዎት **'skip'** ብለው ይጻፉ)፦"
+        "ከተጋበዙ የሪፈራል ኮድ ያስገቡ (ከሌለዎት 'skip' ብለው ይጻፉ)፦"
     )
     return DEPOSIT_REF_CODE
 
@@ -413,11 +409,10 @@ async def deposit_ref_code_received(
     acc_name = MY_CBE_NAME if method == "CBE" else MY_TELEBIRR_NAME
 
     await update.message.reply_text(
-        f"💳 **የክፍያ መረጃ**\n\n"
-        f"መጠን፦ **{amount} ETB**\n"
-        f"የተቀባይ ስም፦ **{acc_name}**\n\n"
-        f"እባክዎን ክፍያውን ፈጽመው የባንኩን/ቴሌብርን SMS ጽሁፍ ወይም ደረሰኝ (Photo) እዚህ ይላኩ፦",
-        parse_mode="Markdown",
+        f"የክፍያ መረጃ\n\n"
+        f"መጠን፦ {amount} ETB\n"
+        f"የተቀባይ ስም፦ {acc_name}\n\n"
+        f"እባክዎን ክፍያውን ፈጽመው የባንኩን/ቴሌብርን SMS ጽሁፍ ወይም ደረሰኝ (Photo) እዚህ ይላኩ፦"
     )
     return DEPOSIT_PROOF
 
@@ -435,11 +430,11 @@ async def deposit_proof_received(
     if update.message.photo:
         if not OCR_AVAILABLE:
             await update.message.reply_text(
-                "⚠️ በምስል ማረጋገጥ በጊዜያዊነት አይሰራም። እባክዎን የባንክ ወይም የቴሌብር SMS ጽሁፉን ኮፒ አድርገው ይላኩ።"
+                "በምስል ማረጋገጥ በጊዜያዊነት አይሰራም። እባክዎን የባንክ ወይም የቴሌብር SMS ጽሁፉን ኮፒ አድርገው ይላኩ።"
             )
             return DEPOSIT_PROOF
 
-        await update.message.reply_text("🔍 ደረሰኝዎ በመመርመር ላይ ነው...")
+        await update.message.reply_text("ደረሰኝዎ በመመርመር ላይ ነው...")
         photo_file = await update.message.photo[-1].get_file()
         photo_path = f"temp_{user_id}.jpg"
         await photo_file.download_to_drive(photo_path)
@@ -449,7 +444,7 @@ async def deposit_proof_received(
             extracted_text = pytesseract.image_to_string(image)
         except Exception:
             await update.message.reply_text(
-                "⚠️ ደረሰኙን ማንበብ አልተቻለም። እባክዎን የትራንዛክሽን SMS ጽሁፉን ይላኩ።"
+                "ደረሰኙን ማንበብ አልተቻለም። እባክዎን የትራንዛክሽን SMS ጽሁፉን ይላኩ።"
             )
             if os.path.exists(photo_path):
                 os.remove(photo_path)
@@ -496,7 +491,7 @@ async def deposit_proof_received(
                 try:
                     await context.bot.send_message(
                         chat_id=uid,
-                        text=f"🎉 በሪፈራል ኮድዎ ሌላ ሰው ትኬት ስለቆረጠ **10 ETB** ኮሚሽን ወደ ዋሌትዎ ገቢ ሆኗል!",
+                        text="በሪፈራል ኮድዎ ሌላ ሰው ትኬት ስለቆረጠ 10 ETB ኮሚሽን ወደ ዋሌትዎ ገቢ ሆኗል!",
                     )
                 except Exception:
                     pass
@@ -505,34 +500,33 @@ async def deposit_proof_received(
     save_db()
 
     await update.message.reply_text(
-        f"🎉 **ክፍያዎ ተረጋግጦ ትኬትዎ ተቆርጧል!**\n\n"
-        f"🎟 **የእጣ ቁጥር ({current_round})፦** `{ticket_no}`\n"
-        f"🔗 **የእርስዎ ሪፈራል ኮድ፦** `{my_ref_code}`\n\n"
-        f"✨ **መልካም እድል!**",
-        parse_mode="Markdown",
+        f"ክፍያዎ ተረጋግጦ ትኬትዎ ተቆርጧል!\n\n"
+        f"የእጣ ቁጥር ({current_round})፦ {ticket_no}\n"
+        f"የእርስዎ ሪፈራል ኮድ፦ {my_ref_code}\n\n"
+        f"መልካም እድል!",
         reply_markup=get_main_keyboard(),
     )
 
     try:
         admin_msg = (
-            f"📥 **አዲስ ትኬት ተቆርጧል!**\n\n"
-            f"👤 ተጠቃሚ ID፦ `{user_id}`\n"
-            f"📱 ስልክ፦ {phone}\n"
-            f"💵 የተከፈለ መጠን፦ {expected_amount} ETB\n"
-            f"🎟 የእጣ ቁጥር ({current_round})፦ `{ticket_no}`"
+            f"አዲስ ትኬት ተቆርጧል!\n\n"
+            f"ተጠቃሚ ID፦ {user_id}\n"
+            f"ስልክ፦ {phone}\n"
+            f"የተከፈለ መጠን፦ {expected_amount} ETB\n"
+            f"የእጣ ቁጥር ({current_round})፦ {ticket_no}"
         )
         if ref_owner_id:
-            admin_msg += f"\n🎁 ሪፈራል የተጠቀመው ከ፦ `{ref_owner_id}` (10 ETB ተከፍሏል)"
+            admin_msg += f"\nሪፈራል የተጠቀመው ከ፦ {ref_owner_id} (10 ETB ተከፍሏል)"
 
         await context.bot.send_message(
-            chat_id=ADMIN_ID, text=admin_msg, parse_mode="Markdown"
+            chat_id=ADMIN_ID, text=admin_msg
         )
 
         with open(DB_FILE, "rb") as doc:
             await context.bot.send_document(
                 chat_id=ADMIN_ID,
                 document=doc,
-                caption=f"📦 **ባክአፕ (አዲስ ትኬት፦ {ticket_no})**",
+                caption=f"ባክአፕ (አዲስ ትኬት፦ {ticket_no})",
             )
     except Exception as e:
         logging.error(f"Admin Notify Error: {e}")
@@ -544,7 +538,7 @@ async def deposit_proof_received(
 # -------------------------------------------------------------
 async def start_transfer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "🔄 እባክዎን ገንዘብ የሚልኩለትን ሰው **የቴሌግራም ID** ያስገቡ፦"
+        "እባክዎን ገንዘብ የሚልኩለትን ሰው የቴሌግራም ID ያስገቡ፦"
     )
     return TRANSFER_TARGET_ID
 
@@ -554,25 +548,25 @@ async def transfer_target_received(
     text = update.message.text.strip()
     if not text.isdigit():
         await update.message.reply_text(
-            "❌ የቴሌግራም ID ቁጥር ብቻ መሆን አለበት። እባክዎን እንደገና ያስገቡ፦"
+            "የቴሌግራም ID ቁጥር ብቻ መሆን አለበት። እባክዎን እንደገና ያስገቡ፦"
         )
         return TRANSFER_TARGET_ID
 
     target_id = int(text)
     if target_id not in users_db:
         await update.message.reply_text(
-            "❌ ይህ ተጠቃሚ በቦቱ ውስጥ አልተገኘም። እባክዎን IDውን አረጋግጠው እንደገና ያስገቡ፦"
+            "ይህ ተጠቃሚ በቦቱ ውስጥ አልተገኘም። እባክዎን IDውን አረጋግጠው እንደገና ያስገቡ፦"
         )
         return TRANSFER_TARGET_ID
 
     if target_id == update.effective_user.id:
         await update.message.reply_text(
-            "❌ ወደራስዎ አካውንት ማስተላለፍ አይችሉም! እባክዎን የሌላ ሰው ID ያስገቡ፦"
+            "ወደራስዎ አካውንት ማስተላለፍ አይችሉም! እባክዎን የሌላ ሰው ID ያስገቡ፦"
         )
         return TRANSFER_TARGET_ID
 
     context.user_data["transfer_target"] = target_id
-    await update.message.reply_text("💵 ማስተላለፍ የሚፈልጉትን የብር መጠን ያስገቡ፦")
+    await update.message.reply_text("ማስተላለፍ የሚፈልጉትን የብር መጠን ያስገቡ፦")
     return TRANSFER_AMOUNT
 
 async def transfer_amount_received(
@@ -581,7 +575,7 @@ async def transfer_amount_received(
     text = update.message.text.strip()
     if not text.isdigit():
         await update.message.reply_text(
-            "❌ እባክዎን የብር መጠን በቁጥር ብቻ ያስገቡ፦"
+            "እባክዎን የብር መጠን በቁጥር ብቻ ያስገቡ፦"
         )
         return TRANSFER_AMOUNT
 
@@ -591,13 +585,13 @@ async def transfer_amount_received(
 
     if amount > current_bal:
         await update.message.reply_text(
-            f"❌ በቂ የዋሌት ባላንስ የለዎትም። አሁን ያሎት ባላንስ {current_bal} ETB ነው። እንደገና ያስገቡ፦"
+            f"በቂ የዋሌት ባላንስ የለዎትም። አሁን ያሎት ባላንስ {current_bal} ETB ነው። እንደገና ያስገቡ፦"
         )
         return TRANSFER_AMOUNT
 
     context.user_data["transfer_amount"] = amount
     await update.message.reply_text(
-        "🔒 ሂደቱን ለማረጋገጥ የሚስጥር ቁጥርዎን (PIN) ያስገቡ፦"
+        "ሂደቱን ለማረጋገጥ የሚስጥር ቁጥርዎን (PIN) ያስገቡ፦"
     )
     return TRANSFER_PIN
 
@@ -610,7 +604,7 @@ async def transfer_pin_received(
 
     if text != correct_pin:
         await update.message.reply_text(
-            "❌ የሚስጥር ቁጥርዎ ትክክል አይደለም። እባክዎን እንደገና ይሞክሩ፦"
+            "የሚስጥር ቁጥርዎ ትክክል አይደለም። እባክዎን እንደገና ይሞክሩ፦"
         )
         return TRANSFER_PIN
 
@@ -622,22 +616,20 @@ async def transfer_pin_received(
     save_db()
 
     await update.message.reply_text(
-        f"✅ **ገንዘብ በትክክል ተላክቷል!**\n\n"
-        f"💸 የተላከው መጠን፦ {amount} ETB\n"
-        f"👤 የተቀባይ ID፦ `{target_id}`\n"
-        f"💰 ቀሪ ባላንስዎ፦ {users_db[user_id]['wallet_balance']} ETB",
-        parse_mode="Markdown",
+        f"ገንዘብ በትክክል ተላክቷል!\n\n"
+        f"የተላከው መጠን፦ {amount} ETB\n"
+        f"የተቀባይ ID፦ {target_id}\n"
+        f"ቀሪ ባላንስዎ፦ {users_db[user_id]['wallet_balance']} ETB",
         reply_markup=get_main_keyboard(),
     )
 
     try:
         await context.bot.send_message(
             chat_id=target_id,
-            text=f"🎉 **ገንዘብ ገቢ ሆኖልዎታል!**\n\n"
-            f"📥 የተላከዉ መጠን፦ {amount} ETB\n"
-            f"👤 የላኪ ID፦ `{user_id}`\n"
-            f"💰 አጠቃላይ ባላንስዎ፦ {users_db[target_id]['wallet_balance']} ETB",
-            parse_mode="Markdown",
+            text=f"ገንዘብ ገቢ ሆኖልዎታል!\n\n"
+            f"የተላከዉ መጠን፦ {amount} ETB\n"
+            f"የላኪ ID፦ {user_id}\n"
+            f"አጠቃላይ ባላንስዎ፦ {users_db[target_id]['wallet_balance']} ETB",
         )
     except Exception:
         pass
@@ -667,8 +659,7 @@ async def withdraw_method_selected(
     context.user_data["withdraw_method"] = method
 
     await query.edit_message_text(
-        f"የመረጡት መንገድ፦ **{method}**\n\nእባክዎን **የአካውንት ቁጥር** እና **የአካውንቱን ባለቤት ሙሉ ስም** ያስገቡ፦",
-        parse_mode="Markdown",
+        f"የመረጡት መንገድ፦ {method}\n\nእባክዎን የአካውንት ቁጥር እና የአካውንቱን ባለቤት ሙሉ ስም ያስገቡ፦"
     )
     return WITHDRAW_ACCOUNT_INFO
 
@@ -676,7 +667,7 @@ async def withdraw_account_received(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ):
     context.user_data["withdraw_acc_info"] = update.message.text.strip()
-    await update.message.reply_text("💵 ማውጣት የሚፈልጉትን የብር መጠን ያስገቡ፦")
+    await update.message.reply_text("ማውጣት የሚፈልጉትን የብር መጠን ያስገቡ፦")
     return WITHDRAW_AMOUNT
 
 async def withdraw_amount_received(
@@ -685,7 +676,7 @@ async def withdraw_amount_received(
     text = update.message.text.strip()
     if not text.isdigit():
         await update.message.reply_text(
-            "❌ እባክዎን የብር መጠን በቁጥር ብቻ ያስገቡ፦"
+            "እባክዎን የብር መጠን በቁጥር ብቻ ያስገቡ፦"
         )
         return WITHDRAW_AMOUNT
 
@@ -695,13 +686,13 @@ async def withdraw_amount_received(
 
     if amount > current_bal:
         await update.message.reply_text(
-            f"❌ በቂ ባላንስ የለዎትም። ያሎት ባላንስ {current_bal} ETB ነው። እንደገና ያስገቡ፦"
+            f"በቂ ባላንስ የለዎትም። ያሎት ባላንስ {current_bal} ETB ነው። እንደገና ያስገቡ፦"
         )
         return WITHDRAW_AMOUNT
 
     context.user_data["withdraw_amount"] = amount
     await update.message.reply_text(
-        "🔒 ሂደቱን ለማረጋገጥ የሚስጥር ቁጥርዎን (PIN) ያስገቡ፦"
+        "ሂደቱን ለማረጋገጥ የሚስጥር ቁጥርዎን (PIN) ያስገቡ፦"
     )
     return WITHDRAW_PIN
 
@@ -714,7 +705,7 @@ async def withdraw_pin_received(
 
     if text != correct_pin:
         await update.message.reply_text(
-            "❌ የሚስጥር ቁጥርዎ ትክክል አይደለም። እባክዎን እንደገና ይሞክሩ፦"
+            "የሚስጥር ቁጥርዎ ትክክል አይደለም። እባክዎን እንደገና ይሞክሩ፦"
         )
         return WITHDRAW_PIN
 
@@ -728,25 +719,24 @@ async def withdraw_pin_received(
     remaining_bal = users_db[user_id]["wallet_balance"]
 
     await update.message.reply_text(
-        f"✅ **የገንዘብ ማውጣት ጥያቄዎ ለአድሚን ተልኳል!**\n\n"
-        f"💸 የተጠየቀው መጠን፦ {amount} ETB\n"
-        f"🏦 መንገድ፦ {method}\n"
-        f"💰 በዋሌትዎ የቀረ ብር፦ {remaining_bal} ETB",
-        parse_mode="Markdown",
+        f"የገንዘብ ማውጣት ጥያቄዎ ለአድሚን ተልኳል!\n\n"
+        f"የተጠየቀው መጠን፦ {amount} ETB\n"
+        f"መንገድ፦ {method}\n"
+        f"በዋሌትዎ የቀረ ብር፦ {remaining_bal} ETB",
         reply_markup=get_main_keyboard(),
     )
 
     try:
         admin_msg = (
-            f"⚠️ **አዲስ የገንዘብ ማውጣት ጥያቄ!**\n\n"
-            f"👤 ተጠቃሚ ID፦ `{user_id}`\n"
-            f"💵 መጠን፦ **{amount} ETB**\n"
-            f"🏦 መንገድ፦ {method}\n"
-            f"📋 የአካውንት መረጃ፦ {acc_info}\n"
-            f"💰 የተጠቃሚው ቀሪ ባላንስ፦ {remaining_bal} ETB"
+            f"አዲስ የገንዘብ ማውጣት ጥያቄ!\n\n"
+            f"ተጠቃሚ ID፦ {user_id}\n"
+            f"መጠን፦ {amount} ETB\n"
+            f"መንገድ፦ {method}\n"
+            f"የአካውንት መረጃ፦ {acc_info}\n"
+            f"የተጠቃሚው ቀሪ ባላንስ፦ {remaining_bal} ETB"
         )
         await context.bot.send_message(
-            chat_id=ADMIN_ID, text=admin_msg, parse_mode="Markdown"
+            chat_id=ADMIN_ID, text=admin_msg
         )
     except Exception as e:
         logging.error(f"Withdraw Admin Notify Error: {e}")
@@ -767,7 +757,7 @@ async def post_channel_updates(context: ContextTypes.DEFAULT_TYPE):
         earned = ref_cnt * 10
         if ref_cnt > 0:
             top_referrers.append(
-                f"• **{name}** ➡️ {ref_cnt} ሰው ያስቆረጠ ({earned} ETB የሰራ)"
+                f"• {name} ➡️ {ref_cnt} ሰው ያስቆረጠ ({earned} ETB የሰራ)"
             )
 
         user_tickets = udata.get("tickets", {})
@@ -777,39 +767,39 @@ async def post_channel_updates(context: ContextTypes.DEFAULT_TYPE):
             t_count = len(user_tickets.get(current_round, []))
             
         if t_count > 0:
-            ticket_buyers.append(f"• **{name}** (የቲኬት ብዛት፦ {t_count})")
+            ticket_buyers.append(f"• {name} (የቲኬት ብዛት፦ {t_count})")
 
     messages = [
         (
-            f"📢 **የ Hidase Digital Lottery ወቅታዊ መረጃ!**\n\n"
+            f"የ Hidase Digital Lottery ወቅታዊ መረጃ!\n\n"
             + (
-                "🔥 **በሪፈራል ብዙ የሰሩ ተጠቃሚዎች፦**\n"
+                "በሪፈራል ብዙ የሰሩ ተጠቃሚዎች፦\n"
                 + "\n".join(top_referrers[:5])
                 + "\n\n"
                 if top_referrers
                 else ""
             )
             + (
-                f"🎟 **ትኬት የወጣላቸው ተጠቃሚዎች ስም ዝርዝር ({current_round})፦**\n"
+                f"ትኬት የወጣላቸው ተጠቃሚዎች ስም ዝርዝር ({current_round})፦\n"
                 + "\n".join(ticket_buyers[:10])
                 + "\n\n"
                 if ticket_buyers
                 else ""
             )
-            + "💡 እርስዎም ትኬት በመቁረጥ የሪፈራል ኮድዎን በማጋራት በ 1 ሰው 10 ETB መስራት ይችላሉ!\n"
-            "📺 የሎተሪ አወጣጥ ሂደቱ በቅርቡ በቻናላችን ላይቭ (Live) ይተላለፋል!"
+            + "እርስዎም ትኬት በመቁረጥ የሪፈራል ኮድዎን በማጋራት በ 1 ሰው 10 ETB መስራት ይችላሉ!\n"
+            "የሎተሪ አወጣጥ ሂደቱ በቅርቡ በቻናላችን ላይቭ (Live) ይተላለፋል!"
         ),
         (
-            "🎁 **አጓጊ የሎተሪ ሽልማት!** 🎁\n\n"
-            "💻 **የመጀመሪያ ዙር ዋና ሽልማት፦ Core i7 11th Generation Laptop!**\n\n"
-            "🎟 አሁኑኑ ቦቱን በመጠቀም የሎተሪ ትኬትዎን ይቁረጡና የዕድሉ ባለቤት ይሁኑ!"
+            "አጓጊ የሎተሪ ሽልማት!\n\n"
+            "የመጀመሪያ ዙር ዋና ሽልማት፦ Core i7 11th Generation Laptop!\n\n"
+            "አሁኑኑ ቦቱን በመጠቀም የሎተሪ ትኬትዎን ይቁረጡና የዕድሉ ባለቤት ይሁኑ!"
         ),
         (
-            "💰 **ያለ ምንም ካፒታል በሪፈራል ብቻ ብር መስራት ይፈልጋሉ?**\n\n"
+            "ያለ ምንም ካፒታል በሪፈራል ብቻ ብር መስራት ይፈልጋሉ?\n\n"
             "1️⃣ ቦቱን ይክፈቱ እና የሪፈራል ኮድዎን ይውሰዱ።\n"
             "2️⃣ ለጓደኞችዎ እና በየግሩፑ ያጋሩ።\n"
-            "3️⃣ በኮድዎ እያንዳንዱ ሰው ትኬት ሲቆርጥ **10 ETB** ወደ ዋሌትዎ ገቢ ይሆናል!\n\n"
-            "ይፍጠኑ! አሁኑኑ ማጋራት ይጀምሩ! 🚀"
+            "3️⃣ በኮድዎ እያንዳንዱ ሰው ትኬት ሲቆርጥ 10 ETB ወደ ዋሌትዎ ገቢ ይሆናል!\n\n"
+            "ይፍጠኑ! አሁኑኑ ማጋራት ይጀምሩ!"
         ),
     ]
 
@@ -817,14 +807,14 @@ async def post_channel_updates(context: ContextTypes.DEFAULT_TYPE):
 
     try:
         await context.bot.send_message(
-            chat_id=CHANNEL_USERNAME, text=selected_msg, parse_mode="Markdown"
+            chat_id=CHANNEL_USERNAME, text=selected_msg
         )
         logging.info("በአውቶማቲክ መልዕክት ወደ ቻናሉ ተልኳል!")
     except Exception as e:
         logging.error(f"Channel Broadcast Error: {e}")
 
 # -------------------------------------------------------------
-# 🎲 LOTTERY DRAWING & ADMIN COMMANDS (ROUND-SAFE)
+# 🎲 LOTTERY DRAWING & ADMIN COMMANDS
 # -------------------------------------------------------------
 async def draw_winner(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
@@ -854,7 +844,7 @@ async def draw_winner(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not all_tickets:
         await update.message.reply_text(
-            f"❌ በአሁኑ ዙር ({current_round}) እስካሁን የተቆረጠ ትኬት የለም!"
+            f"አሁኑ ዙር ({current_round}) እስካሁን የተቆረጠ ትኬት የለም!"
         )
         return
 
@@ -863,25 +853,25 @@ async def draw_winner(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     msg = (
-        f"🎉 **የሎተሪ አሸናፊው ተለይቷል! ({current_round})** 🎉\n\n"
-        f"🎟 **የአሸናፊው ትኬት ቁጥር፦** `{winning_ticket}`\n"
-        f"👤 **የአሸናፊው ስም፦** {winner_name}\n"
-        f"🆔 **የአሸናፊው Telegram ID፦** `{winner_uid}`\n"
-        f"📱 **ስልክ ቁጥር፦** {winner_phone}\n\n"
-        f"👏 **እንኳን ደስ አለዎት!**"
+        f"የሎተሪ አሸናፊው ተለይቷል! ({current_round})\n\n"
+        f"የአሸናፊው ትኬት ቁጥር፦ {winning_ticket}\n"
+        f"የአሸናፊው ስም፦ {winner_name}\n"
+        f"የአሸናፊው Telegram ID፦ {winner_uid}\n"
+        f"ስልክ ቁጥር፦ {winner_phone}\n\n"
+        f"እንኳን ደስ አለዎት!"
     )
 
-    await update.message.reply_text(msg, parse_mode="Markdown")
+    await update.message.reply_text(msg)
 
     try:
         channel_msg = (
-            f"🥳 **የዛሬው ዙር አሸናፊ ተለይቷል! ({current_round})**\n\n"
-            f"🎟 **አሸናፊ ትኬት፦** `{winning_ticket}`\n"
-            f"👤 **አሸናፊ፦** {winner_name}\n\n"
+            f"የዛሬው ዙር አሸናፊ ተለይቷል! ({current_round})\n\n"
+            f"አሸናፊ ትኬት፦ {winning_ticket}\n"
+            f"አሸናፊ፦ {winner_name}\n\n"
             f"ቀጣዩ አሸናፊ እርስዎ ሊሆኑ ይችላሉ! አዲሱ ዙር ተከፍቷል!"
         )
         await context.bot.send_message(
-            chat_id=CHANNEL_USERNAME, text=channel_msg, parse_mode="Markdown"
+            chat_id=CHANNEL_USERNAME, text=channel_msg
         )
     except Exception as e:
         logging.error(f"Winner Broadcast Error: {e}")
@@ -897,8 +887,7 @@ async def draw_winner(update: Update, context: ContextTypes.DEFAULT_TYPE):
     save_db()
     
     await update.message.reply_text(
-        f"🔄 **አዲስ ዙር ({database_root['current_round']}) ተጀምሯል!** የቀድሞዎቹ ትኬቶች ተዘግተዋል አዲሶቹ ተጠቃሚዎች መሳተፍ ይችላሉ።",
-        parse_mode="Markdown"
+        f"አዲስ ዙር ({database_root['current_round']}) ተጀምሯል! የቀድሞዎቹ ትኬቶች ተዘግተዋል አዲሶቹ ተጠቃሚዎች መሳተፍ ይችላሉ።"
     )
 
 async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -917,12 +906,12 @@ async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     total_users = len(users_db)
 
     msg = (
-        f"📊 **የሲስተም አጠቃላይ መረጃ**\n\n"
-        f"🎯 አሁን ያለበት ዙር፦ {current_round}\n"
-        f"👥 አጠቃላይ ተጠቃሚዎች፦ {total_users}\n"
-        f"🎟 በዚህ ዙር የተቆረጡ ትኬቶች፦ {total_tickets}\n"
+        f"የሲስተም አጠቃላይ መረጃ\n\n"
+        f"አሁን ያለበት ዙር፦ {current_round}\n"
+        f"አጠቃላይ ተጠቃሚዎች፦ {total_users}\n"
+        f"በዚህ ዙር የተቆረጡ ትኬቶች፦ {total_tickets}\n"
     )
-    await update.message.reply_text(msg, parse_mode="Markdown")
+    await update.message.reply_text(msg)
 
 async def get_backup_now(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
@@ -931,10 +920,10 @@ async def get_backup_now(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if os.path.exists(DB_FILE):
         with open(DB_FILE, "rb") as doc:
             await update.message.reply_document(
-                document=doc, caption="📦 **አሁን ያለው የደንበኞች መረጃ (Backup)**"
+                document=doc, caption="አሁን ያለው የደንበኞች መረጃ (Backup)"
             )
     else:
-        await update.message.reply_text("❌ ምንም የዳታቤዝ ፋይል አልተገኘም።")
+        await update.message.reply_text("ምንም የዳታቤዝ ፋይል አልተገኘም።")
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
@@ -955,7 +944,6 @@ def main():
 
     app = Application.builder().token(BOT_TOKEN).build()
 
-    # Register error handler
     app.add_error_handler(error_handler)
 
     if app.job_queue:
@@ -967,13 +955,13 @@ def main():
         )
 
     menu_button_filter = filters.Regex(
-        "^(🎟 ትኬት ይቁረጡ|💸 ገንዘብ ያውጡ|🔄 ገንዘብ ይላኩ|🎁 የሽልማት ዝርዝር|💼 የኔ ዋሌት)$"
+        "^(.*ትኬት ይቁረጡ.*|.*ገንዘብ ያውጡ.*|.*ገንዘብ ይላኩ.*|.*የሽልማት ዝርዝር.*|.*የኔ ዋሌት.*)$"
     )
 
     ticket_conv = ConversationHandler(
         entry_points=[
             MessageHandler(
-                filters.Regex("^🎟 ትኬት ይቁረጡ$"), start_buy_ticket
+                filters.Regex(".*ትኬት ይቁረጡ.*"), start_buy_ticket
             )
         ],
         states={
@@ -1016,7 +1004,7 @@ def main():
 
     transfer_conv = ConversationHandler(
         entry_points=[
-            MessageHandler(filters.Regex("^🔄 ገንዘብ ይላኩ$"), start_transfer)
+            MessageHandler(filters.Regex(".*ገንዘብ ይላኩ.*"), start_transfer)
         ],
         states={
             TRANSFER_TARGET_ID: [
@@ -1047,7 +1035,7 @@ def main():
 
     withdraw_conv = ConversationHandler(
         entry_points=[
-            MessageHandler(filters.Regex("^💸 ገንዘብ ያውጡ$"), start_withdraw)
+            MessageHandler(filters.Regex(".*ገንዘብ ያውጡ.*"), start_withdraw)
         ],
         states={
             WITHDRAW_METHOD: [
@@ -1084,10 +1072,10 @@ def main():
     app.add_handler(withdraw_conv)
 
     app.add_handler(
-        MessageHandler(filters.Regex("^🎁 የሽልማት ዝርዝር$"), show_rewards)
+        MessageHandler(filters.Regex(".*የሽልማት ዝርዝር.*"), show_rewards)
     )
     app.add_handler(
-        MessageHandler(filters.Regex("^💼 የኔ ዋሌት$"), show_wallet)
+        MessageHandler(filters.Regex(".*የኔ ዋሌት.*"), show_wallet)
     )
     app.add_handler(CommandHandler("start", start))
 
@@ -1098,7 +1086,6 @@ def main():
         )
     )
 
-    # Admin Commands
     app.add_handler(CommandHandler("stats", admin_stats))
     app.add_handler(CommandHandler("backup", get_backup_now))
     app.add_handler(CommandHandler("draw", draw_winner))
