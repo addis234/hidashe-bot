@@ -1,4 +1,4 @@
-import asyncio
+Import asyncio
 import json
 import logging
 import os
@@ -43,8 +43,11 @@ ADMIN_ID = int(os.environ.get("ADMIN_ID", "6722504980"))
 
 CHANNEL_USERNAME = -1003865662998
 
-MY_CBE_NAME = "Addis Alemayehu"
+MY_CBE_NAME = "Melkam Enyew Belete"
+MY_CBE_ACC = "1000462638454"
+
 MY_TELEBIRR_NAME = "Addis"
+MY_TELEBIRR_ACC = "0981212774"
 
 DB_FILE = "users_db.json"
 USED_TXNS_FILE = "used_txns.json"
@@ -212,7 +215,7 @@ def verify_receipt_text(
 ) -> Tuple[bool, str]:
     clean_text = text.lower()
 
-    if "addis" not in clean_text:
+    if "addis" not in clean_text and "melkam" not in clean_text:
         return (
             False,
             "ገንዘቡን አላስገቡም እባክዎ ገንዘቡን ገቢ በማድረግ ትኬትዎን ይውሰዱ!",
@@ -406,12 +409,16 @@ async def deposit_ref_code_received(
 
     method = context.user_data.get("dep_method", "CBE")
     amount = context.user_data.get("dep_amount", 0)
-    acc_name = MY_CBE_NAME if method == "CBE" else MY_TELEBIRR_NAME
+    
+    if method == "CBE":
+        acc_details = f"የባንክ ስም፦ ንግድ ባንክ (CBE)\nየአካውንት ቁጥር፦ {MY_CBE_ACC}\nየአካውንት ስም፦ {MY_CBE_NAME}"
+    else:
+        acc_details = f"የቴሌብር ስም፦ ቴሌብር (Telebirr)\nየስልክ ቁጥር፦ {MY_TELEBIRR_ACC}\nየስም ዝርዝር፦ {MY_TELEBIRR_NAME}"
 
     await update.message.reply_text(
         f"የክፍያ መረጃ\n\n"
-        f"መጠን፦ {amount} ETB\n"
-        f"የተቀባይ ስም፦ {acc_name}\n\n"
+        f"መጠን፦ {amount} ETB\n\n"
+        f"{acc_details}\n\n"
         f"እባክዎን ክፍያውን ፈጽመው የባንኩን/ቴሌብርን SMS ጽሁፍ ወይም ደረሰኝ (Photo) እዚህ ይላኩ፦"
     )
     return DEPOSIT_PROOF
