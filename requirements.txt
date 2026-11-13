@@ -2,7 +2,7 @@ python-telegram-bot
 fastapi
 uvicorn
 requests
+Pillow
 pytesseract
-pillow>=10.0.0
 
 
