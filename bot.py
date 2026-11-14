@@ -38,7 +38,7 @@ except Exception:
 # -------------------------------------------------------------
 # CONFIGURATIONS & ENVIRONMENT VARIABLES
 # -------------------------------------------------------------
-BOT_TOKEN = "8833785126:AAGMZ6q5O6OSrXZx6IjCwJRxPcmaliL7WyY"
+BOT_TOKEN = "8833785126:AAE93lbwP64AvjqhV6gOJ41Z6matSy9mZ_U"
 ADMIN_ID = int(os.environ.get("ADMIN_ID", "6722504980"))
 
 CHANNEL_USERNAME = -1003865662998
